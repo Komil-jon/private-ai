@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Private AI</title>
+
+  <link rel="icon" type="image/png" href="/static/images/claude-ai-icon.svg">
+
+  <!-- Fonts & Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.1/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Ubuntu&family=Poppins&display=swap" rel="stylesheet">
+
+  <!-- Scrollbar -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/malihu-custom-scrollbar-plugin/3.1.3/jquery.mCustomScrollbar.min.css">
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+
+  <!-- Loader -->
+  <div id="loader">
+    <section class="wrapper">
+      <section class="icon icon2">
+        <section class="planetoid"></section>
+        <section class="planet"></section>
+        <section class="ring-planet"></section>
+        <div class="trademark">Eternal 2026</div>
+      </section>
+    </section>
+  </div>
+
+  <!-- Alert Box -->
+  <div id="alert" class="alert-box hidden" style="display: block;">
+    <div style="padding: 2vh;">
+
+      <div style="padding: 1vh; font-weight: bold; color: moccasin; text-align: center; font-size: 2vh;">
+        <i class="fa-solid fa-circle-info"></i> System
+      </div>
+
+      <div id="alert-message"
+           style="background-color: #e0e0e0; padding: 1vh 0; color: #444; text-align: center; border-radius: 1vh;">
+        Your activity has been reported!
+      </div>
+
+      <div style="padding-top: 2vh; text-align: center;">
+        <button id="ok-btn"
+                style="padding: 1vh 5vh; background-color: #999; color: white; border: none; border-radius: 1vh; cursor: pointer;">
+          OK
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div id="content" class="hidden">
+
+    <div class="chat">
+
+      <div class="chat-title">
+        <h1>Claude</h1>
+        <h2><i class="fa-solid fa-user-tie"></i> Private AI</h2>
+
+        <figure class="avatar">
+          <img src="/static/images/claude-ai-icon.svg" alt="logo">
+        </figure>
+      </div>
+
+      <div class="messages">
+        <div class="messages-content"></div>
+      </div>
+
+      <div class="message-box">
+        <textarea class="message-input" placeholder="Type message..."></textarea>
+        <button type="submit" class="message-submit">
+          <i class="fa-solid fa-paper-plane"></i> Send
+        </button>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Scripts -->
+  <script src="//cdnjs.cloudflare.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/malihu-custom-scrollbar-plugin/3.1.3/jquery.mCustomScrollbar.concat.min.js"></script>
+  <script src="/static/script.js"></script>
+
+</body>
+</html>
