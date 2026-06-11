@@ -48,8 +48,9 @@ Chat
   transform: translate(-50%, -50%) scale(1.5);
   bottom: -50.3vh;
   font-weight: normal;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s ease, height 0.35s ease;
 }
+
 
 
 /*--------------------
@@ -96,6 +97,459 @@ Chat Title
   height: auto;
 }
 
+/* History toggle button inside chat-title (right side) */
+#history-toggle-btn {
+  position: absolute;
+  right: 1vh;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255, 228, 181, 0.12);
+  border: 0.15vh solid rgba(255, 228, 181, 0.3);
+  color: rgba(255, 228, 181, 0.7);
+  border-radius: 0.7vh;
+  width: 2.6vh;
+  height: 2.6vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1vh;
+  flex-shrink: 0;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  z-index: 3;
+}
+#history-toggle-btn:hover {
+  background: rgba(255, 228, 181, 0.25);
+  border-color: moccasin;
+  color: moccasin;
+}
+#history-toggle-btn.active {
+  background: rgba(255, 228, 181, 0.28);
+  border-color: moccasin;
+  color: moccasin;
+}
+
+/*--------------------
+History Drawer
+--------------------*/
+.history-drawer {
+  flex: 0 0 auto;
+  overflow: hidden;
+  max-height: 22vh;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.18);
+  border-bottom: 0.1vh solid rgba(255, 228, 181, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+.history-drawer.collapsed {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.history-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7vh 1vh 0.5vh;
+  font-size: 0.8vh;
+  color: rgba(255, 228, 181, 0.8);
+  letter-spacing: 0.05vh;
+  text-transform: uppercase;
+  border-bottom: 0.1vh solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+}
+.history-drawer-header span {
+  display: flex;
+  align-items: center;
+  gap: 0.4vh;
+}
+#history-clear-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.25);
+  font-size: 0.85vh;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.2s ease;
+  line-height: 1;
+}
+#history-clear-btn:hover {
+  color: rgba(255, 80, 80, 0.7);
+}
+
+.history-list {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  padding: 0.4vh 0;
+}
+.history-list::-webkit-scrollbar { width: 0.25vh; }
+.history-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 228, 181, 0.2);
+  border-radius: 0.25vh;
+}
+
+.history-empty {
+  font-size: 0.8vh;
+  color: rgba(255, 255, 255, 0.3);
+  text-align: center;
+  padding: 1vh 0;
+  font-weight: normal;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5vh;
+  padding: 0.35vh 1vh;
+  font-size: 0.8vh;
+  font-weight: normal;
+  transition: background 0.15s ease;
+  cursor: default;
+}
+.history-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.history-role {
+  font-size: 0.65vh;
+  text-transform: uppercase;
+  letter-spacing: 0.05vh;
+  flex-shrink: 0;
+  width: 1.8vh;
+  text-align: center;
+  border-radius: 0.3vh;
+  padding: 0.1vh 0.3vh;
+}
+.history-item--user .history-role {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+}
+.history-item--assistant .history-role {
+  background: rgba(255, 228, 181, 0.15);
+  color: moccasin;
+}
+.history-preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.6);
+}
+.history-source-count {
+  font-size: 0.65vh;
+  color: rgba(255, 228, 181, 0.55);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.2vh;
+}
+.history-time {
+  font-size: 0.65vh;
+  color: rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+
+/*--------------------
+Streaming cursor
+--------------------*/
+.stream-cursor {
+  display: inline-block;
+  width: 0.5vh;
+  height: 1.1vh;
+  background: moccasin;
+  border-radius: 0.1vh;
+  margin-left: 0.15vh;
+  vertical-align: text-bottom;
+  opacity: 0.85;
+  animation: cursor-blink 0.55s steps(1) infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 0.85; }
+  50%       { opacity: 0; }
+}
+
+/* While streaming, keep the bubble content as plain text (pre-wrap)
+   so tokens append naturally without markdown interference */
+.message.streaming .message-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/*--------------------
+Source Chips
+--------------------*/
+.source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4vh;
+  margin-top: 0.5vh;
+}
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3vh;
+  background: rgba(255, 228, 181, 0.1);
+  border: 0.12vh solid rgba(255, 228, 181, 0.25);
+  color: rgba(255, 228, 181, 0.8);
+  border-radius: 0.5vh;
+  padding: 0.2vh 0.6vh;
+  font-size: 0.7vh;
+  font-weight: normal;
+  white-space: nowrap;
+  max-width: 14vh;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.source-chip:hover {
+  background: rgba(255, 228, 181, 0.18);
+  border-color: rgba(255, 228, 181, 0.5);
+  color: moccasin;
+}
+.source-chip i {
+  font-size: 0.65vh;
+  flex-shrink: 0;
+}
+#upload-toggle-btn {
+  background: rgba(255, 228, 181, 0.12);
+  border: 0.15vh solid rgba(255, 228, 181, 0.3);
+  color: rgba(255, 228, 181, 0.7);
+  border-radius: 0.7vh;
+  width: 2.6vh;
+  height: 2.6vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.1vh;
+  flex-shrink: 0;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+#upload-toggle-btn:hover {
+  background: rgba(255, 228, 181, 0.25);
+  border-color: moccasin;
+  color: moccasin;
+}
+#upload-toggle-btn.active {
+  background: rgba(255, 228, 181, 0.28);
+  border-color: moccasin;
+  color: moccasin;
+}
+
+/*--------------------
+Upload Panel (inside message-box, expands upward)
+--------------------*/
+.upload-panel {
+  overflow: hidden;
+  max-height: 22vh;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, padding 0.3s ease, margin-bottom 0.3s ease;
+  opacity: 1;
+  border-bottom: 0.1vh solid rgba(255, 228, 181, 0.15);
+  padding: 1vh 0 0.8vh;
+  margin-bottom: 0.7vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6vh;
+}
+
+.upload-panel.collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+  border-bottom: none;
+}
+
+/* Drop Zone */
+.drop-zone {
+  border: 0.2vh dashed rgba(255, 228, 181, 0.4);
+  border-radius: 1vh;
+  padding: 1.2vh 1vh;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+  background: rgba(255, 228, 181, 0.04);
+  position: relative;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: moccasin;
+  background: rgba(255, 228, 181, 0.1);
+}
+
+.drop-zone.drag-over .drop-icon {
+  transform: translateY(-0.3vh) scale(1.15);
+  color: moccasin;
+}
+
+.drop-zone-inner {
+  pointer-events: none;
+}
+
+.drop-icon {
+  font-size: 2.2vh;
+  color: rgba(255, 228, 181, 0.6);
+  display: block;
+  margin-bottom: 0.4vh;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.drop-label {
+  font-size: 0.85vh;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0 0 0.2vh;
+  font-weight: normal;
+}
+
+.drop-browse {
+  color: moccasin;
+  text-decoration: underline;
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.drop-hint {
+  font-size: 0.75vh;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0;
+  letter-spacing: 0.05vh;
+  font-weight: normal;
+}
+
+/* File List */
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4vh;
+  max-height: 7vh;
+  overflow-y: auto;
+}
+
+.file-list::-webkit-scrollbar {
+  width: 0.3vh;
+}
+.file-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 228, 181, 0.3);
+  border-radius: 0.3vh;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6vh;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 0.6vh;
+  padding: 0.35vh 0.7vh;
+  font-size: 0.8vh;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: normal;
+  animation: bounce 350ms linear both;
+}
+
+.file-item .file-ext-badge {
+  font-size: 0.65vh;
+  background: rgba(255, 228, 181, 0.2);
+  color: moccasin;
+  border-radius: 0.4vh;
+  padding: 0.1vh 0.4vh;
+  text-transform: uppercase;
+  letter-spacing: 0.04vh;
+  flex-shrink: 0;
+}
+
+.file-item .file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-item .file-size {
+  font-size: 0.7vh;
+  color: rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+}
+
+.file-item .file-remove {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  font-size: 0.8vh;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+.file-item .file-remove:hover {
+  color: rgba(255, 80, 80, 0.8);
+}
+
+/* File item states */
+.file-item.uploading .file-ext-badge {
+  background: rgba(255, 228, 181, 0.1);
+  color: rgba(255, 228, 181, 0.5);
+}
+.file-item.success .file-ext-badge {
+  background: rgba(100, 200, 100, 0.2);
+  color: #8dffb0;
+}
+.file-item.error .file-ext-badge {
+  background: rgba(255, 80, 80, 0.2);
+  color: #ff8d8d;
+}
+
+/* Upload Actions Row */
+.upload-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8vh;
+}
+
+.upload-submit-btn {
+  background: rgba(255, 228, 181, 0.15);
+  border: 0.15vh solid rgba(255, 228, 181, 0.4);
+  color: moccasin;
+  border-radius: 0.7vh;
+  padding: 0.45vh 1.2vh;
+  font-size: 0.8vh;
+  font-family: "Poppins", sans-serif;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.upload-submit-btn:hover:not(:disabled) {
+  background: rgba(255, 228, 181, 0.28);
+  border-color: moccasin;
+}
+.upload-submit-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.upload-status {
+  font-size: 0.75vh;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: normal;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upload-status.success {
+  color: #8dffb0;
+}
+.upload-status.error {
+  color: #ff8d8d;
+}
+
 /*--------------------
 Messages
 --------------------*/
@@ -125,6 +579,10 @@ Messages
   margin-left: 3.5vh;
   position: relative;
   text-shadow: 0 0.1vh 1px rgba(0, 0, 0, 0.2);
+  max-width: calc(100% - 4.5vh);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
 .messages .message .timestamp {
   position: absolute;
@@ -136,7 +594,7 @@ Messages
   content: "";
   position: absolute;
   bottom: -6px;
-  border-top: 6px solid trasnparent; /* #682e6b; */
+  border-top: 6px solid trasnparent;
   left: 0;
   border-right: 7px solid transparent;
 }
@@ -163,21 +621,48 @@ Messages
   text-align: right;
   background: rgba(0,0,0, 0.2);
   border-radius: 1vh 1vh 0 1vh;
+  margin-left: 0;
+  margin-right: 1vh;
+  max-width: calc(100% - 2vh);
 }
 .messages .message.message-personal::before {
   left: auto;
   right: 0;
   border-right: none;
   border-left: 5px solid transparent;
-  border-top: 4px solid trasnparent; /* #682e6b; */;
+  border-top: 4px solid trasnparent;
   bottom: -4px;
 }
 .messages .message:last-child {
   margin-bottom: 3vh;
 }
+
+/* Markdown content inside AI messages */
+.messages .message p {
+  margin: 0 0 0.4vh;
+}
+.messages .message p:last-child {
+  margin-bottom: 0;
+}
+.messages .message pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 0.5vh;
+  padding: 0.5vh 0.7vh;
+  font-size: 0.9vh;
+  margin: 0.4vh 0 0;
+  overflow-x: auto;
+}
+.messages .message code {
+  font-size: 0.9vh;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 0.3vh;
+  padding: 0 0.3vh;
+}
 .messages .message.new {
   color: white;
-  transform: scale(announce the new date soon. Everything will remain the same, including the 100m Sprint0);
+  transform: scale(0);
   transform-origin: 0 0;
   -webkit-animation: bounce 500ms linear both;
           animation: bounce 500ms linear both;
@@ -249,12 +734,23 @@ Messages
 Message Box
 --------------------*/
 .message-box {
-  flex: 0 1 4dvh;
+  flex: 0 1 auto;
   width: 100%;
   background: rgba(0, 0, 0, 0.2);
-  padding: 1dvh;
-  position: relative;
+  padding: 1vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
+
+/* Row: paperclip | textarea | send */
+.message-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7vh;
+  min-height: 2.6vh;
+}
+
 .message-box .message-input {
   background: none;
   border: none;
@@ -262,38 +758,49 @@ Message Box
   resize: none;
   color: white;
   font-size: 1vh;
+  line-height: 1.5;
   margin: 0;
-  padding-right: 2vh;
-  width: 30vh;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+  /* single line to start; JS grows it */
+  height: 1.5vh;
+  max-height: 8vh;
+  overflow-y: hidden;
+  display: block;
+  font-family: "Poppins", sans-serif;
+  /* vertical centering inside the row handled by align-items: center on row */
 }
 .message-input::placeholder {
-    color: white;
+  color: rgba(255, 255, 255, 0.55);
 }
-.message-box textarea:focus:-webkit-placeholder {
-  color: transparent;
-}
+
+/* Send button — same shape & feel as attachment button */
 .message-box .message-submit {
-  position: absolute;
-  z-index: 1;
-  right: 1vh;
-  color: #fff;
-  border: none;
-  background: rgba(0,0,0, 0.3);
-  font-size: 1vh;
-  /*text-transform: uppercase;*/
-  line-height: 1;
-  padding: 0.8vh 1vh;
-  top: 1.3vh;
-  border-radius: 1vh;
+  background: rgba(255, 228, 181, 0.12);
+  border: 0.15vh solid rgba(255, 228, 181, 0.3);
+  color: rgba(255, 228, 181, 0.7);
+  border-radius: 0.7vh;
+  width: 2.6vh;
+  height: 2.6vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.1vh;
+  flex-shrink: 0;
   outline: none !important;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  padding: 0;
 }
 .message-box .message-submit:hover {
-  background: rgba(0,0,0, 0.5);
+  background: rgba(255, 228, 181, 0.25);
+  border-color: moccasin;
+  color: moccasin;
 }
 
 /*--------------------
-Custom Srollbar
+Custom Scrollbar
 --------------------*/
 .mCSB_scrollTools {
   margin: 0.1vh -0.3vh 0.1vh 0;
@@ -625,22 +1132,6 @@ section:after {
 /* CUSTOM ALERT MESSAGE */
 /* CUSTOM ALERT MESSAGE */
 
-.alert-box {
-  width: 300px;
-  background-color: #f0f0f0;
-  border-radius: 12px;
-  overflow: hidden;
-  font-family: sans-serif;
-  border: 1px solid #ccc;
-  z-index: 10000;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  opacity: 1;
-  transition: opacity 0.4s ease;
-}
-
 #alert {
   transition: opacity 0.3s ease, visibility 0.3s ease;
   opacity: 1;
@@ -650,8 +1141,11 @@ section:after {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 10000;
-  background-color: rgba(0, 0, 0, 0.6);
+  /* dark glass overlay behind the box */
+  background-color: rgba(0, 0, 0, 0.55);
   width: 40vh;
+  border-radius: 1.5vh;
+  backdrop-filter: blur(0.5vh);
 }
 
 #alert.hidden {
@@ -660,23 +1154,47 @@ section:after {
 }
 
 .alert-box {
-  background-color: #f0f0f0; /* Slightly light background for the box */
-  border-radius: 10px;
-  box-shadow: 0px 5px 15px rgba(0, 0, 0, 0.2);
+  background: rgba(30, 30, 30, 0.85);
+  border: 0.15vh solid rgba(255, 228, 181, 0.2);
+  border-radius: 1.2vh;
+  box-shadow: 0 0.8vh 2.5vh rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font-family: "Poppins", sans-serif;
+  z-index: 10000;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 1;
+  transition: opacity 0.4s ease;
+  width: 28vh;
+}
+
+#alert-message {
+  background: rgba(255, 255, 255, 0.07) !important;
+  padding: 1vh !important;
+  color: rgba(255, 255, 255, 0.75) !important;
+  text-align: center !important;
+  border-radius: 0.8vh !important;
+  font-size: 0.9vh;
+  font-weight: normal;
 }
 
 #ok-btn {
-  padding: 1vh 5vh;
-  background-color: #999;
-  color: white;
-  border: none;
-  border-radius: 1vh;
+  padding: 0.6vh 3vh;
+  background: rgba(255, 228, 181, 0.15);
+  border: 0.15vh solid rgba(255, 228, 181, 0.35);
+  color: moccasin;
+  border-radius: 0.7vh;
   cursor: pointer;
-  transition: background-color 0.3s ease;
+  font-family: "Poppins", sans-serif;
+  font-size: 0.85vh;
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 #ok-btn:hover {
-  background-color: moccasin;
+  background: rgba(255, 228, 181, 0.28);
+  border-color: moccasin;
 }
 
 /* HIDDEN PROPERTY */
@@ -690,4 +1208,34 @@ section:after {
   position: absolute;
   pointer-events: none;
   transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+
+/*--------------------
+AI Disclaimer
+--------------------*/
+.ai-disclaimer {
+  position: absolute;
+  /* sits just below the chat card — chat is centred at 50% and is ~52vh tall,
+     so bottom of card is roughly at 50% + 26vh; add a small gap */
+  top: calc(50% + 26vh * 1.5 + 1.2vh);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  font-family: "Poppins", sans-serif;
+  font-size: 0.72vh;
+  font-weight: normal;
+  color: rgba(255, 255, 255, 0.28);
+  letter-spacing: 0.03vh;
+  display: flex;
+  align-items: center;
+  gap: 0.4vh;
+  z-index: 3;
+  pointer-events: none;
+  transition: color 0.2s ease;
+}
+.ai-disclaimer i {
+  font-size: 0.7vh;
+  color: rgba(255, 228, 181, 0.3);
 }

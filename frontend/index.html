@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Private AI</title>
 
-  <link rel="icon" type="image/png" href="/static/images/claude-ai-icon.svg">
+  <link rel="icon" type="image/png" href="/static/images/icon.svg">
 
   <!-- Fonts & Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.1/css/all.min.css">
@@ -60,12 +60,29 @@
     <div class="chat">
 
       <div class="chat-title">
-        <h1>Claude</h1>
+        <h1>Obelius</h1>
         <h2><i class="fa-solid fa-user-tie"></i> Private AI</h2>
 
+        <button id="history-toggle-btn" title="Conversation history">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+        </button>
+
         <figure class="avatar">
-          <img src="/static/images/claude-ai-icon.svg" alt="logo">
+          <img src="/static/images/icon.svg" alt="logo">
         </figure>
+      </div>
+
+      <!-- History Drawer -->
+      <div id="history-drawer" class="history-drawer collapsed">
+        <div class="history-drawer-header">
+          <span><i class="fa-solid fa-clock-rotate-left"></i> History</span>
+          <button id="history-clear-btn" title="Clear history">
+            <i class="fa-solid fa-trash-can"></i>
+          </button>
+        </div>
+        <div id="history-list" class="history-list">
+          <div class="history-empty">No saved messages yet.</div>
+        </div>
       </div>
 
       <div class="messages">
@@ -73,13 +90,46 @@
       </div>
 
       <div class="message-box">
-        <textarea class="message-input" placeholder="Type message..."></textarea>
-        <button type="submit" class="message-submit">
-          <i class="fa-solid fa-paper-plane"></i> Send
-        </button>
+
+        <!-- File Upload Panel (expands upward inside message-box) -->
+        <div id="upload-panel" class="upload-panel collapsed">
+          <div id="drop-zone" class="drop-zone">
+            <input type="file" id="file-input" multiple accept=".pdf,.docx,.txt,.csv" hidden>
+            <div class="drop-zone-inner">
+              <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
+              <p class="drop-label">Drop files here or <span class="drop-browse" id="browse-trigger">browse</span></p>
+              <p class="drop-hint">PDF · DOCX · TXT · CSV</p>
+            </div>
+          </div>
+          <div id="file-list" class="file-list"></div>
+          <div class="upload-actions">
+            <button id="upload-submit-btn" class="upload-submit-btn" disabled>
+              <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload
+            </button>
+            <div id="upload-status" class="upload-status"></div>
+          </div>
+        </div>
+
+        <!-- Input row: paperclip | textarea | send -->
+        <div class="message-input-row">
+          <button id="upload-toggle-btn" title="Upload documents">
+            <i class="fa-solid fa-paperclip"></i>
+          </button>
+          <textarea class="message-input" placeholder="Type message..."></textarea>
+          <button type="submit" class="message-submit" title="Send">
+            <i class="fa-solid fa-paper-plane"></i>
+          </button>
+        </div>
+
       </div>
 
     </div>
+
+    <!-- Disclaimer -->
+    <p class="ai-disclaimer">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      Obelius can make mistakes. Verify important information independently.
+    </p>
 
   </div>
 
