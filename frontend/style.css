@@ -1239,3 +1239,213 @@ AI Disclaimer
   font-size: 0.7vh;
   color: rgba(255, 228, 181, 0.3);
 }
+
+/* ============================================================
+   UNIFIED CONVERSATIONS DRAWER  (replaces sidebar + old drawer)
+   ============================================================ */
+
+/* ── Drawer container ────────────────────────────────────────── */
+.history-drawer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: 28vh;
+  transition: max-height 0.38s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity     0.3s  ease;
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.18);
+  border-bottom: 0.1vh solid rgba(255, 228, 181, 0.12);
+}
+.history-drawer.collapsed {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Drawer header ───────────────────────────────────────────── */
+.history-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7vh 1vh 0.5vh;
+  font-size: 0.8vh;
+  color: rgba(255, 228, 181, 0.8);
+  letter-spacing: 0.05vh;
+  text-transform: uppercase;
+  border-bottom: 0.1vh solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+}
+.history-drawer-header span {
+  display: flex;
+  align-items: center;
+  gap: 0.4vh;
+}
+
+/* header action buttons (new chat + delete all) */
+.drawer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4vh;
+}
+#new-chat-btn,
+#delete-all-btn {
+  background: none;
+  border: 0.12vh solid rgba(255, 228, 181, 0.2);
+  color: rgba(255, 228, 181, 0.45);
+  border-radius: 0.45vh;
+  width: 2.1vh;
+  height: 2.1vh;
+  font-size: 0.8vh;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  padding: 0;
+}
+#new-chat-btn:hover {
+  color: moccasin;
+  border-color: rgba(255, 228, 181, 0.55);
+  background: rgba(255, 228, 181, 0.08);
+}
+#delete-all-btn:hover {
+  color: rgba(255, 80, 80, 0.8);
+  border-color: rgba(255, 80, 80, 0.4);
+}
+
+/* ── Conversation list ───────────────────────────────────────── */
+.conv-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.3vh 0;
+  min-height: 0;
+}
+.conv-list::-webkit-scrollbar { width: 0.25vh; }
+.conv-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 228, 181, 0.15);
+  border-radius: 0.25vh;
+}
+
+.conv-empty {
+  font-size: 0.78vh;
+  color: rgba(255, 255, 255, 0.28);
+  text-align: center;
+  padding: 1.2vh 1vh;
+  font-weight: normal;
+}
+
+/* individual conversation row */
+.conv-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45vh;
+  padding: 0.45vh 1vh;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  position: relative;
+}
+.conv-item:hover  { background: rgba(255, 255, 255, 0.04); }
+.conv-item.active { background: rgba(167, 130, 71, 0.14); }
+
+.conv-item-icon {
+  font-size: 0.75vh;
+  color: rgba(255, 228, 181, 0.35);
+  flex-shrink: 0;
+}
+.conv-item-title {
+  flex: 1;
+  font-size: 0.78vh;
+  color: rgba(255, 255, 255, 0.65);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: normal;
+}
+.conv-item.active .conv-item-title { color: moccasin; }
+
+.conv-item-date {
+  font-size: 0.62vh;
+  color: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
+}
+.conv-item-delete {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.12);
+  font-size: 0.72vh;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.conv-item:hover .conv-item-delete { opacity: 1; }
+.conv-item-delete:hover { color: rgba(255, 80, 80, 0.8); }
+
+/* ── Auth footer ─────────────────────────────────────────────── */
+.drawer-auth-footer {
+  flex-shrink: 0;
+  border-top: 0.1vh solid rgba(255, 228, 181, 0.1);
+  padding: 0.6vh 1vh;
+}
+.drawer-auth-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5vh;
+  font-size: 0.75vh;
+  color: rgba(255, 255, 255, 0.38);
+  font-weight: normal;
+}
+.drawer-auth-row i {
+  font-size: 0.82vh;
+  color: rgba(255, 228, 181, 0.38);
+  flex-shrink: 0;
+}
+
+.hidden-auth { display: none !important; }
+
+.drawer-login-link {
+  margin-left: auto;
+  color: moccasin;
+  font-size: 0.72vh;
+  text-decoration: none;
+  border: 0.12vh solid rgba(255, 228, 181, 0.3);
+  border-radius: 0.4vh;
+  padding: 0.15vh 0.6vh;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  white-space: nowrap;
+}
+.drawer-login-link:hover {
+  background: rgba(255, 228, 181, 0.1);
+  border-color: moccasin;
+}
+
+.drawer-username {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.55);
+}
+.drawer-logout-btn {
+  margin-left: auto;
+  background: none;
+  border: 0.12vh solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.25);
+  border-radius: 0.4vh;
+  width: 1.9vh;
+  height: 1.9vh;
+  font-size: 0.72vh;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease, border-color 0.2s ease;
+  padding: 0;
+}
+.drawer-logout-btn:hover {
+  color: rgba(255, 80, 80, 0.8);
+  border-color: rgba(255, 80, 80, 0.4);
+}

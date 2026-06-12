@@ -1,7 +1,11 @@
 fastapi
-uvicorn
+uvicorn[standard]
 python-dotenv
 openai
 google-genai
 python-multipart
 PyPDF2
+python-docx
+motor
+httpx
+pymongo

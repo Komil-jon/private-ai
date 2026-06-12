@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Private AI</title>
+  <title>Obelius — Private AI</title>
 
   <link rel="icon" type="image/png" href="/static/images/icon.svg">
 
@@ -32,25 +32,21 @@
   </div>
 
   <!-- Alert Box -->
-  <div id="alert" class="alert-box hidden" style="display: block;">
-    <div style="padding: 2vh;">
-
-      <div style="padding: 1vh; font-weight: bold; color: moccasin; text-align: center; font-size: 2vh;">
+  <div id="alert" class="alert-box hidden" style="display:block;">
+    <div style="padding:2vh;">
+      <div style="padding:1vh;font-weight:bold;color:moccasin;text-align:center;font-size:2vh;">
         <i class="fa-solid fa-circle-info"></i> System
       </div>
-
       <div id="alert-message"
-           style="background-color: #e0e0e0; padding: 1vh 0; color: #444; text-align: center; border-radius: 1vh;">
+           style="background-color:#e0e0e0;padding:1vh 0;color:#444;text-align:center;border-radius:1vh;">
         Your activity has been reported!
       </div>
-
-      <div style="padding-top: 2vh; text-align: center;">
+      <div style="padding-top:2vh;text-align:center;">
         <button id="ok-btn"
-                style="padding: 1vh 5vh; background-color: #999; color: white; border: none; border-radius: 1vh; cursor: pointer;">
+                style="padding:1vh 5vh;background-color:#999;color:white;border:none;border-radius:1vh;cursor:pointer;">
           OK
         </button>
       </div>
-
     </div>
   </div>
 
@@ -63,7 +59,8 @@
         <h1>Obelius</h1>
         <h2><i class="fa-solid fa-user-tie"></i> Private AI</h2>
 
-        <button id="history-toggle-btn" title="Conversation history">
+        <!-- Single history/conversations toggle button -->
+        <button id="history-toggle-btn" title="Conversations">
           <i class="fa-solid fa-clock-rotate-left"></i>
         </button>
 
@@ -72,17 +69,45 @@
         </figure>
       </div>
 
-      <!-- History Drawer -->
+      <!-- Unified conversations drawer -->
       <div id="history-drawer" class="history-drawer collapsed">
+
+        <!-- Drawer header: title + new chat + delete all -->
         <div class="history-drawer-header">
-          <span><i class="fa-solid fa-clock-rotate-left"></i> History</span>
-          <button id="history-clear-btn" title="Clear history">
-            <i class="fa-solid fa-trash-can"></i>
-          </button>
+          <span><i class="fa-solid fa-comments"></i> Conversations</span>
+          <div class="drawer-header-actions">
+            <button id="new-chat-btn" title="New conversation">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+            <button id="delete-all-btn" title="Delete all">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </div>
         </div>
-        <div id="history-list" class="history-list">
-          <div class="history-empty">No saved messages yet.</div>
+
+        <!-- Conversation list (logged-in) / sign-in prompt (guest) -->
+        <div id="conv-list" class="conv-list">
+          <!-- filled by JS -->
         </div>
+
+        <!-- Auth footer: always visible at bottom of drawer -->
+        <div class="drawer-auth-footer">
+          <!-- Guest state -->
+          <div id="drawer-guest" class="drawer-auth-row">
+            <i class="fa-solid fa-user-slash"></i>
+            <span>Guest mode</span>
+            <a id="drawer-login-btn" class="drawer-login-link" href="#">Sign in</a>
+          </div>
+          <!-- Logged-in state -->
+          <div id="drawer-user" class="drawer-auth-row hidden-auth">
+            <i class="fa-solid fa-circle-user"></i>
+            <span id="drawer-username" class="drawer-username">…</span>
+            <button id="drawer-logout-btn" class="drawer-logout-btn" title="Sign out">
+              <i class="fa-solid fa-right-from-bracket"></i>
+            </button>
+          </div>
+        </div>
+
       </div>
 
       <div class="messages">
@@ -91,7 +116,7 @@
 
       <div class="message-box">
 
-        <!-- File Upload Panel (expands upward inside message-box) -->
+        <!-- File Upload Panel -->
         <div id="upload-panel" class="upload-panel collapsed">
           <div id="drop-zone" class="drop-zone">
             <input type="file" id="file-input" multiple accept=".pdf,.docx,.txt,.csv" hidden>
@@ -110,12 +135,12 @@
           </div>
         </div>
 
-        <!-- Input row: paperclip | textarea | send -->
+        <!-- Input row -->
         <div class="message-input-row">
           <button id="upload-toggle-btn" title="Upload documents">
             <i class="fa-solid fa-paperclip"></i>
           </button>
-          <textarea class="message-input" placeholder="Type message..."></textarea>
+          <textarea class="message-input" placeholder="Type message…"></textarea>
           <button type="submit" class="message-submit" title="Send">
             <i class="fa-solid fa-paper-plane"></i>
           </button>
