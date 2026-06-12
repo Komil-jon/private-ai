@@ -5,13 +5,11 @@
 /* =======================
    STATE
 ======================= */
-var isFirstResponse = true;
+var currentUser  = null;
+var currentToken = null;
+var activeConvId = null;
 
-var currentUser  = null;   // { user_id, username, email, full_name } or null
-var currentToken = null;   // JWT string or null
-var activeConvId = null;   // MongoDB _id string (logged-in only)
-
-// Guest session id — still used as the document-store key for uploads
+// Guest session id — used as document-store key for uploads
 var id = getOrCreateSessionId();
 
 var $messages = $('.messages-content');
@@ -25,91 +23,9 @@ $(window).on('load', function () {
 
   setTimeout(function () {
     showLoadingMessage();
-    checkAuth().then(function () {
-      setTimeout(firstMessage, 2000);
-    });
+    // checkAuth handles everything — including showing first message
+    checkAuth();
   }, 100);
-});
-
-/* =======================
-   AUTH  — check on load
-======================= */
-var AUTH_BASE = 'https://auth.eternal.uz';
-
-async function checkAuth() {
-  try {
-    var token = localStorage.getItem('eternal_token');
-    if (!token) { renderAuthState(null); return; }
-
-    var resp = await fetch(AUTH_BASE + '/api/verify', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token: token }),
-    });
-    if (!resp.ok) { renderAuthState(null); return; }
-
-    var data = await resp.json();
-    if (!data.valid) {
-      localStorage.removeItem('eternal_token');
-      renderAuthState(null);
-      return;
-    }
-
-    currentToken = token;
-    currentUser  = data.user;
-    renderAuthState(currentUser);
-    await loadConversations();
-
-    // Restore last active conversation
-    var lastConv = localStorage.getItem('obelius_last_conv');
-    if (lastConv) {
-      await openConversation(lastConv, false);
-    }
-
-  } catch (e) {
-    console.warn('[auth] check failed:', e);
-    renderAuthState(null);
-  }
-}
-
-function renderAuthState(user) {
-  var guestEl    = document.getElementById('drawer-guest');
-  var userEl     = document.getElementById('drawer-user');
-  var usernameEl = document.getElementById('drawer-username');
-  var convList   = document.getElementById('conv-list');
-
-  if (user) {
-    if (guestEl)    guestEl.classList.add('hidden-auth');
-    if (userEl)     userEl.classList.remove('hidden-auth');
-    if (usernameEl) usernameEl.textContent = user.full_name || user.username;
-    if (convList)   convList.innerHTML = '';
-  } else {
-    if (guestEl)   guestEl.classList.remove('hidden-auth');
-    if (userEl)    userEl.classList.add('hidden-auth');
-    if (convList)  convList.innerHTML =
-      '<div class="conv-empty">Sign in to see your conversations.</div>';
-  }
-}
-
-/* =======================
-   AUTH  — sign in / out
-======================= */
-document.getElementById('drawer-login-btn').addEventListener('click', function (e) {
-  e.preventDefault();
-  var redirect = encodeURIComponent(window.location.href);
-  window.location.href = AUTH_BASE + '?redirect=' + redirect;
-});
-
-document.getElementById('drawer-logout-btn').addEventListener('click', function () {
-  localStorage.removeItem('eternal_token');
-  localStorage.removeItem('eternal_user');
-  localStorage.removeItem('obelius_last_conv');
-  currentToken = null;
-  currentUser  = null;
-  activeConvId = null;
-  renderAuthState(null);
-  clearChat();
-  firstMessage();
 });
 
 /* =======================
@@ -130,7 +46,163 @@ function getOrCreateSessionId() {
 }
 
 /* =======================
-   CONVERSATIONS DRAWER
+   AUTH — check on page load
+
+   Flow:
+   1. No token  → show guest greeting
+   2. Token invalid → clear it, show guest greeting
+   3. Token valid, has lastConv → load that conversation
+   4. Token valid, no lastConv → auto-create new conv, show greeting
+======================= */
+var AUTH_BASE = 'https://auth.eternal.uz';
+
+/* Pick up token from URL after OAuth redirect, then clean the URL */
+(function handleAuthCallback() {
+  var params = new URLSearchParams(window.location.search);
+  var urlToken = params.get('token') || params.get('eternal_token');
+  if (urlToken) {
+    localStorage.setItem('eternal_token', urlToken);
+    // Strip the token from the address bar without a page reload
+    params.delete('token');
+    params.delete('eternal_token');
+    var clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+    history.replaceState(null, '', clean);
+  }
+})();
+
+async function checkAuth() {
+  try {
+    var token = localStorage.getItem('eternal_token');
+    if (!token) {
+      renderAuthState(null);
+      hideLoadingMessage();
+      firstMessage();
+      return;
+    }
+
+    var resp = await fetch(AUTH_BASE + '/api/verify', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ token: token }),
+    });
+
+    if (!resp.ok) {
+      renderAuthState(null);
+      hideLoadingMessage();
+      firstMessage();
+      return;
+    }
+
+    var data = await resp.json();
+    if (!data.valid) {
+      localStorage.removeItem('eternal_token');
+      renderAuthState(null);
+      hideLoadingMessage();
+      firstMessage();
+      return;
+    }
+
+    // ── Authenticated ────────────────────────────────────────
+    currentToken = token;
+    currentUser  = data.user;
+    renderAuthState(currentUser);
+
+    // Load conversation list for the drawer
+    await loadConversations();
+
+    var lastConv = localStorage.getItem('obelius_last_conv');
+    if (lastConv) {
+      // Try to restore the last conversation
+      var restored = await openConversation(lastConv, true);
+      if (!restored) {
+        // That conversation no longer exists — start fresh
+        localStorage.removeItem('obelius_last_conv');
+        await startFreshConversation();
+      }
+    } else {
+      // No previous conversation — start a fresh one
+      await startFreshConversation();
+    }
+
+  } catch (e) {
+    console.warn('[auth] check failed:', e);
+    renderAuthState(null);
+    hideLoadingMessage();
+    firstMessage();
+  }
+}
+
+async function startFreshConversation() {
+  // Create a conversation in DB so the first message has a home
+  if (!currentToken) return;
+  try {
+    var resp = await fetch('/api/conversations', {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': 'Bearer ' + currentToken,
+      },
+      body: JSON.stringify({}),
+    });
+    if (resp.ok) {
+      var conv = await resp.json();
+      activeConvId = conv.id;
+      localStorage.setItem('obelius_last_conv', conv.id);
+      // Refresh list so the new blank conversation appears
+      await loadConversations();
+    }
+  } catch (e) {
+    console.warn('[conv] startFresh failed:', e);
+  }
+  hideLoadingMessage();
+  firstMessage();
+}
+
+/* =======================
+   AUTH STATE RENDER
+======================= */
+function renderAuthState(user) {
+  var guestEl    = document.getElementById('drawer-guest');
+  var userEl     = document.getElementById('drawer-user');
+  var usernameEl = document.getElementById('drawer-username');
+  var convList   = document.getElementById('conv-list');
+
+  if (user) {
+    if (guestEl)    guestEl.classList.add('hidden-auth');
+    if (userEl)     userEl.classList.remove('hidden-auth');
+    if (usernameEl) usernameEl.textContent = user.full_name || user.username;
+    if (convList)   convList.innerHTML = '';
+  } else {
+    if (guestEl)   guestEl.classList.remove('hidden-auth');
+    if (userEl)    userEl.classList.add('hidden-auth');
+    if (convList)  convList.innerHTML =
+      '<div class="conv-empty">Sign in to see your conversations.</div>';
+  }
+}
+
+/* =======================
+   AUTH — sign in / out
+======================= */
+document.getElementById('drawer-login-btn').addEventListener('click', function (e) {
+  e.preventDefault();
+  var redirect = encodeURIComponent(window.location.href);
+  window.location.href = AUTH_BASE + '?redirect=' + redirect;
+});
+
+document.getElementById('drawer-logout-btn').addEventListener('click', function () {
+  localStorage.removeItem('eternal_token');
+  localStorage.removeItem('eternal_user');
+  localStorage.removeItem('obelius_last_conv');
+  currentToken = null;
+  currentUser  = null;
+  activeConvId = null;
+  renderAuthState(null);
+  clearChat();
+  firstMessage();
+});
+
+/* =======================
+   CONVERSATIONS — load list
 ======================= */
 async function loadConversations() {
   if (!currentToken) return;
@@ -151,7 +223,7 @@ function renderConversationList(convs) {
   if (!list) return;
 
   if (!convs || convs.length === 0) {
-    list.innerHTML = '<div class="conv-empty">No conversations yet.<br>Start one below.</div>';
+    list.innerHTML = '<div class="conv-empty">No conversations yet.</div>';
     return;
   }
 
@@ -173,7 +245,6 @@ function renderConversationList(convs) {
     item.addEventListener('click', function (e) {
       if (e.target.closest('.conv-item-delete')) return;
       openConversation(conv.id, true);
-      // Close the drawer after selection
       closeDrawer();
     });
 
@@ -186,24 +257,42 @@ function renderConversationList(convs) {
   });
 }
 
+/* =======================
+   CONVERSATIONS — open
+   Returns true if conversation was found and loaded, false if not found.
+======================= */
 async function openConversation(convId, clearScreen) {
-  if (!currentToken) return;
-  activeConvId = convId;
-  localStorage.setItem('obelius_last_conv', convId);
-
-  document.querySelectorAll('.conv-item').forEach(function (el) {
-    el.classList.toggle('active', el.getAttribute('data-id') === convId);
-  });
-
-  if (clearScreen) clearChat();
+  if (!currentToken) return false;
 
   try {
     var resp = await fetch('/api/conversations/' + convId + '/messages', {
       headers: { 'Authorization': 'Bearer ' + currentToken }
     });
-    if (!resp.ok) return;
+
+    // 404 means conversation no longer exists
+    if (resp.status === 404) return false;
+    if (!resp.ok) return false;
+
     var msgs = await resp.json();
 
+    activeConvId = convId;
+    localStorage.setItem('obelius_last_conv', convId);
+
+    // Highlight active in list
+    document.querySelectorAll('.conv-item').forEach(function (el) {
+      el.classList.toggle('active', el.getAttribute('data-id') === convId);
+    });
+
+    if (clearScreen) clearChat();
+
+    if (msgs.length === 0) {
+      // Empty conversation — show greeting
+      hideLoadingMessage();
+      firstMessage();
+      return true;
+    }
+
+    // Render all messages
     msgs.forEach(function (msg) {
       if (msg.role === 'user') {
         $('<div class="message message-personal">' + escapeHtmlInline(msg.content) + '</div>')
@@ -220,16 +309,20 @@ async function openConversation(convId, clearScreen) {
       }
     });
 
+    hideLoadingMessage();
     setDate();
     updateScrollbar();
-
-    if (msgs.length === 0) firstMessage();
+    return true;
 
   } catch (e) {
-    console.warn('[conv] load messages failed:', e);
+    console.warn('[conv] open failed:', e);
+    return false;
   }
 }
 
+/* =======================
+   CONVERSATIONS — new
+======================= */
 async function newConversation() {
   if (!currentToken) return;
   try {
@@ -254,6 +347,9 @@ async function newConversation() {
   }
 }
 
+/* =======================
+   CONVERSATIONS — delete
+======================= */
 async function deleteConversation(convId) {
   if (!currentToken) return;
   try {
@@ -265,7 +361,8 @@ async function deleteConversation(convId) {
       activeConvId = null;
       localStorage.removeItem('obelius_last_conv');
       clearChat();
-      firstMessage();
+      // Start a new blank conversation
+      await startFreshConversation();
     }
     await loadConversations();
   } catch (e) {
@@ -283,7 +380,7 @@ async function deleteAllConversations() {
     activeConvId = null;
     localStorage.removeItem('obelius_last_conv');
     clearChat();
-    firstMessage();
+    await startFreshConversation();
     await loadConversations();
   } catch (e) {
     console.warn('[conv] delete all failed:', e);
@@ -292,12 +389,10 @@ async function deleteAllConversations() {
 
 function clearChat() {
   $('.mCSB_container').empty();
-  isFirstResponse = true;
 }
 
 /* =======================
    DRAWER TOGGLE
-   (history-toggle-btn now controls the unified conversations drawer)
 ======================= */
 function closeDrawer() {
   var drawer    = document.getElementById('history-drawer');
@@ -309,7 +404,6 @@ function closeDrawer() {
 (function () {
   var toggleBtn = document.getElementById('history-toggle-btn');
   var drawer    = document.getElementById('history-drawer');
-
   if (!toggleBtn || !drawer) return;
 
   toggleBtn.addEventListener('click', function (e) {
@@ -318,23 +412,18 @@ function closeDrawer() {
     if (isOpen) {
       closeDrawer();
     } else {
-      // Refresh list when opening
       if (currentUser) loadConversations();
       drawer.classList.remove('collapsed');
       toggleBtn.classList.add('active');
     }
   });
 
-  // Close drawer when clicking outside the chat card
   document.addEventListener('click', function (e) {
     var chat = document.querySelector('.chat');
-    if (chat && !chat.contains(e.target)) {
-      closeDrawer();
-    }
+    if (chat && !chat.contains(e.target)) closeDrawer();
   });
 })();
 
-/* New chat button */
 document.getElementById('new-chat-btn').addEventListener('click', function (e) {
   e.stopPropagation();
   if (currentUser) {
@@ -346,7 +435,6 @@ document.getElementById('new-chat-btn').addEventListener('click', function (e) {
   }
 });
 
-/* Delete all button */
 document.getElementById('delete-all-btn').addEventListener('click', function (e) {
   e.stopPropagation();
   if (currentUser) {
@@ -406,7 +494,7 @@ $(window).on('keydown', function (e) {
 });
 
 /* =======================
-   SERVER COMMUNICATION  (streaming SSE)
+   SERVER COMMUNICATION (streaming SSE)
 ======================= */
 function sendMessageToServer(message) {
   showLoadingMessage();
@@ -426,12 +514,15 @@ function sendMessageToServer(message) {
     id:      id,
     message: message,
   };
+
+  // Always include conv_id if we have one — backend uses it to find/create the conversation
   if (activeConvId) body.conv_id = activeConvId;
 
   fetch('/stream', { method: 'POST', headers: headers, body: JSON.stringify(body) })
   .then(function (res) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     hideLoadingMessage();
+
     var bubble      = createStreamingBubble();
     var reader      = res.body.getReader();
     var decoder     = new TextDecoder();
@@ -456,18 +547,25 @@ function sendMessageToServer(message) {
           if (evt.type === 'token') {
             accumulated += evt.text;
             var trimmed = accumulated.trim();
+
             if (trimmed === 'IGNORED') {
               finaliseStreamingBubble(bubble, '', []);
               showAlert('Your activity has been reported!');
               $('.messages-content .message').fadeOut(500);
-              setTimeout(function () { showLoadingMessage(); setTimeout(firstMessage, 2000); }, 100);
-              reader.cancel(); return;
+              setTimeout(function () {
+                showLoadingMessage();
+                setTimeout(firstMessage, 2000);
+              }, 100);
+              reader.cancel();
+              return;
             }
             if (trimmed === 'PERSONAL') {
               finaliseStreamingBubble(bubble, '', []);
               showAlert('That seems like a personal question.');
-              reader.cancel(); return;
+              reader.cancel();
+              return;
             }
+
             appendTokenToBubble(bubble, evt.text);
             updateScrollbar();
           }
@@ -479,16 +577,22 @@ function sendMessageToServer(message) {
           }
 
           else if (evt.type === 'done') {
+            // Backend tells us which conv_id was used/created
             if (evt.conv_id && evt.conv_id !== id) {
+              var wasNew = !activeConvId || activeConvId !== evt.conv_id;
               activeConvId = evt.conv_id;
               localStorage.setItem('obelius_last_conv', activeConvId);
-              if (currentUser) setTimeout(loadConversations, 500);
+              // Refresh drawer list (title may have been auto-set)
+              if (currentUser) {
+                setTimeout(loadConversations, 400);
+              }
             }
           }
 
           else if (evt.type === 'error') {
             finaliseStreamingBubble(bubble, evt.text || 'Something went wrong.', []);
-            setDate(); updateScrollbar();
+            setDate();
+            updateScrollbar();
           }
         });
 
@@ -523,8 +627,7 @@ function createStreamingBubble() {
 }
 
 function appendTokenToBubble(bubble, token) {
-  var content = bubble.find('.message-content');
-  var cursor  = content.find('.stream-cursor');
+  var cursor = bubble.find('.stream-cursor');
   cursor.before(document.createTextNode(token));
 }
 
@@ -532,8 +635,12 @@ function finaliseStreamingBubble(bubble, fullText, sources) {
   var content = bubble.find('.message-content');
   content.find('.stream-cursor').remove();
   bubble.removeClass('streaming');
-  if (fullText.trim()) { content.html(marked.parse(fullText)); }
-  if (sources && sources.length > 0) { bubble.append(buildSourceChips(sources)); }
+  if (fullText && fullText.trim()) {
+    content.html(marked.parse(fullText));
+  }
+  if (sources && sources.length > 0) {
+    bubble.append(buildSourceChips(sources));
+  }
 }
 
 function buildSourceChips(sources) {
@@ -551,17 +658,18 @@ function buildSourceChips(sources) {
 }
 
 /* =======================
-   RECEIVE MESSAGE (system messages, file upload confirmations)
+   RECEIVE MESSAGE (system / file upload confirmations)
 ======================= */
 function receiveMessage(message, sources) {
   hideLoadingMessage();
-  var messageHtml = $('<div class="message new"></div>');
-  var avatarHtml  = '<figure class="avatar"><img src="/static/images/icon.svg" /></figure>';
-  var contentDiv  = $('<div class="message-content"></div>').html(marked.parse(message));
-  messageHtml.append(avatarHtml).append(contentDiv);
-  if (sources && sources.length > 0) { messageHtml.append(buildSourceChips(sources)); }
-  $('.mCSB_container').append(messageHtml);
-  setDate(); updateScrollbar();
+  var bubble  = $('<div class="message new"></div>');
+  var avatar  = '<figure class="avatar"><img src="/static/images/icon.svg" /></figure>';
+  var content = $('<div class="message-content"></div>').html(marked.parse(message));
+  bubble.append(avatar).append(content);
+  if (sources && sources.length > 0) bubble.append(buildSourceChips(sources));
+  $('.mCSB_container').append(bubble);
+  setDate();
+  updateScrollbar();
 }
 
 /* =======================
@@ -570,19 +678,21 @@ function receiveMessage(message, sources) {
 function firstMessage() {
   hideLoadingMessage();
   var greeting = currentUser
-    ? 'Hello, ' + (currentUser.full_name || currentUser.username) + '!'
-    : 'Hello';
+    ? 'Hello, ' + (currentUser.full_name || currentUser.username) + '! How can I help you today?'
+    : 'Hello! How can I help you today?';
 
   $('<div class="message new">' +
     '<figure class="avatar"><img src="/static/images/icon.svg" /></figure>' +
-    escapeHtmlInline(greeting) +
+    '<div class="message-content">' + escapeHtmlInline(greeting) + '</div>' +
     '</div>')
-    .appendTo($('.mCSB_container')).addClass('new');
+    .appendTo($('.mCSB_container'));
 
-  setDate(); updateScrollbar();
+  setDate();
+  updateScrollbar();
 }
 
 function showLoadingMessage() {
+  $('.message.loading').remove(); // prevent duplicates
   $('<div class="message loading new">' +
     '<figure class="avatar"><img src="/static/images/icon.svg" /></figure>' +
     '<span>Loading...</span></div>')
@@ -590,19 +700,22 @@ function showLoadingMessage() {
   updateScrollbar();
 }
 
-function hideLoadingMessage() { $('.message.loading').remove(); }
+function hideLoadingMessage() {
+  $('.message.loading').remove();
+}
 
 /* =======================
-   COLLECT CHAT (guest / fallback context for AI)
+   COLLECT CHAT (guest context for AI)
 ======================= */
 function collectVisibleMessages() {
   var conversation = [];
-  $('.messages-content .message').not(':first').each(function () {
-    if ($(this).is(':visible')) {
-      var text = $(this).find('.message-content').text() || $(this).text();
-      text = text.trim();
-      var isUser = $(this).hasClass('message-personal');
-      if (text) conversation.push({ role: isUser ? 'user' : 'assistant', content: text });
+  $('.messages-content .message').not('.loading').each(function () {
+    if (!$(this).is(':visible')) return;
+    var contentEl = $(this).find('.message-content');
+    var text = (contentEl.length ? contentEl.text() : $(this).text()).trim();
+    var isUser = $(this).hasClass('message-personal');
+    if (text && text !== 'Loading...') {
+      conversation.push({ role: isUser ? 'user' : 'assistant', content: text });
     }
   });
   return conversation;
@@ -840,5 +953,4 @@ function escapeHtmlInline(str) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-/* stub so any legacy call to saveToHistory doesn't crash */
 window.saveToHistory = function () {};

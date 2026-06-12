@@ -1,17 +1,5 @@
 """
 process.py  —  /stream  SSE endpoint
-======================================
-Handles chat requests with streaming.
-
-For logged-in users:
-  - Loads/creates a conversation in MongoDB
-  - Injects user profile (memory) into the system prompt
-  - Saves each exchange (user message + AI reply) to MongoDB
-  - Triggers background memory update after each reply
-
-For guests:
-  - Works exactly as before (session-based, in-memory document store)
-  - No persistence, no memory
 """
 
 from __future__ import annotations
@@ -31,7 +19,7 @@ from app.services.mongo import conversations, messages
 from app.services.memory import get_user_profile, update_user_memory
 from app.services.document_store import retrieve_context, session_has_documents
 from app.services.llm_service import stream_reply
-from app.models.schemas import ProcessRequest
+from app.models.schemas import ProcessRequest, Message
 
 log = logging.getLogger("obelius.process")
 
@@ -46,7 +34,8 @@ def _sse(payload: dict) -> str:
 
 async def _ensure_conversation(user_id: str, conv_id: Optional[str]) -> str:
     """
-    Return conv_id.  Creates a new conversation if conv_id is None or invalid.
+    Return an existing conv_id if valid, otherwise create a new conversation
+    and return its id. Never returns None.
     """
     if conv_id:
         try:
@@ -58,7 +47,6 @@ async def _ensure_conversation(user_id: str, conv_id: Optional[str]) -> str:
         except Exception:
             pass
 
-    # Create a fresh conversation
     now = datetime.now(timezone.utc)
     result = await conversations().insert_one({
         "user_id":    user_id,
@@ -70,7 +58,7 @@ async def _ensure_conversation(user_id: str, conv_id: Optional[str]) -> str:
 
 
 async def _auto_title(conv_id: str, first_user_message: str) -> None:
-    """Set the conversation title from the first user message (async, best-effort)."""
+    """Set the conversation title from the first user message."""
     try:
         title = first_user_message.strip()[:60]
         if len(first_user_message.strip()) > 60:
@@ -83,7 +71,9 @@ async def _auto_title(conv_id: str, first_user_message: str) -> None:
         pass
 
 
-async def _save_message(conv_id: str, user_id: str, role: str, content: str, sources: list) -> None:
+async def _save_message(
+    conv_id: str, user_id: str, role: str, content: str, sources: list
+) -> None:
     try:
         await messages().insert_one({
             "conv_id":  conv_id,
@@ -101,126 +91,130 @@ async def _save_message(conv_id: str, user_id: str, role: str, content: str, sou
         log.warning("Failed to save message: %s", exc)
 
 
-async def _load_history_messages(conv_id: str) -> List[dict]:
-    """Load previous messages for this conversation to give the AI context."""
+async def _load_db_history(conv_id: str) -> List[Message]:
+    """Load previous messages for this conversation (oldest first, last 40)."""
     result = []
     async for msg in messages().find(
         {"conv_id": conv_id}, sort=[("ts", 1)], limit=40
     ):
-        result.append({"role": msg["role"], "content": msg["content"]})
+        result.append(Message(role=msg["role"], content=msg["content"]))
     return result
 
 
-# ── main route ────────────────────────────────────────────────────────────────
+# ── route ─────────────────────────────────────────────────────────────────────
 
 @router.post("/stream")
 async def stream(
-    request:    Request,
-    user:       Optional[UserContext] = Depends(optional_user),
+    request: Request,
+    user: Optional[UserContext] = Depends(optional_user),
 ):
     body = await request.json()
-    req  = ProcessRequest(**body)
 
-    # conv_id is passed by the frontend for logged-in users
-    conv_id: Optional[str] = body.get("conv_id")
+    # session_id used for in-memory document store (guests + logged-in)
+    session_id: str = body.get("id", "unknown")
 
-    # ── For logged-in users: set up conversation and load memory ─────────────
+    # conv_id comes from frontend (set after first exchange, or on conversation switch)
+    client_conv_id: Optional[str] = body.get("conv_id") or None
+
+    # The raw user message text (used for auto-title and memory)
+    raw_message: str = body.get("message", "").strip()
+
+    # ── Logged-in path ────────────────────────────────────────────────────────
     active_conv_id: Optional[str] = None
-    user_profile:   str = ""
-    is_new_conv:    bool = False
+    user_profile:   str           = ""
 
     if user:
-        active_conv_id = await _ensure_conversation(user.user_id, conv_id)
-        is_new_conv    = (conv_id != active_conv_id)
+        # Ensure we always have a valid conversation in DB
+        active_conv_id = await _ensure_conversation(user.user_id, client_conv_id)
 
-        # Load user profile for personalisation
+        # Load user memory for personalisation
         user_profile = await get_user_profile(user.user_id)
 
-        # Replace conversation data from DB (authoritative) instead of the
-        # client-sent array — prevents message injection
-        db_history = await _load_history_messages(active_conv_id)
-        if db_history:
-            from schemas import Message
-            req.data = [Message(role=m["role"], content=m["content"]) for m in db_history]
-            # Re-append the latest user message if not already in DB
-            latest = req.data[-1] if req.data else None
-            if not latest or latest.role != "user":
-                from schemas import Message
-                req.data.append(Message(role="user", content=body.get("message", "")))
+        # Build conversation from DB (authoritative — prevents client injection)
+        db_history = await _load_db_history(active_conv_id)
 
-    # ── Retrieve document context (works for both guests and users) ───────────
-    context_chunks = []
-    if session_has_documents(req.id):
-        last_user = next(
-            (m.content for m in reversed(req.data) if m.role == "user"), ""
-        )
-        context_chunks = retrieve_context(req.id, last_user)
+        # Append the current user message
+        if raw_message:
+            db_history.append(Message(role="user", content=raw_message))
 
-    # ── Extract the latest user message text ─────────────────────────────────
-    latest_user_msg = next(
-        (m.content for m in reversed(req.data) if m.role == "user"), ""
-    )
+        conversation = db_history
 
-    # ── Save user message to DB ───────────────────────────────────────────────
-    if user and active_conv_id and latest_user_msg:
-        # Auto-title on first message
+        # Save the user message to DB immediately (before streaming starts)
         msg_count = await messages().count_documents({"conv_id": active_conv_id})
-        if msg_count == 0:
-            asyncio.create_task(_auto_title(active_conv_id, latest_user_msg))
+        if msg_count == 0 and raw_message:
+            # First message — set auto-title
+            asyncio.create_task(_auto_title(active_conv_id, raw_message))
 
-        await _save_message(
-            active_conv_id, user.user_id, "user", latest_user_msg, []
+        if raw_message:
+            await _save_message(
+                active_conv_id, user.user_id, "user", raw_message, []
+            )
+
+    else:
+        # ── Guest path: use client-sent conversation array ────────────────────
+        try:
+            req = ProcessRequest(**body)
+            conversation = req.data
+        except Exception:
+            conversation = []
+
+    # ── Document context (works for both guests and logged-in users) ──────────
+    context_chunks = []
+    if session_has_documents(session_id):
+        last_user = next(
+            (m.content for m in reversed(conversation) if m.role == "user"), ""
         )
+        context_chunks = retrieve_context(session_id, last_user)
+
+    sources = [
+        {"title": c["filename"], "page": c.get("page"), "chunk": c.get("chunk")}
+        for c in context_chunks
+    ]
 
     # ── Stream generator ──────────────────────────────────────────────────────
     async def event_stream():
         accumulated = ""
-        sources     = [
-            {"title": c["filename"], "page": c.get("page"), "chunk": c.get("chunk")}
-            for c in context_chunks
-        ]
 
         try:
-            # Run synchronous generator in a thread so we don't block the loop
             loop = asyncio.get_event_loop()
 
-            def _sync_gen():
-                return list(stream_reply(req.data, context_chunks, user_profile))
+            def _run_sync():
+                return list(stream_reply(conversation, context_chunks, user_profile))
 
-            tokens = await loop.run_in_executor(None, _sync_gen)
+            tokens = await loop.run_in_executor(None, _run_sync)
 
             for token in tokens:
                 accumulated += token
-
-                # Safety short-circuits — check after accumulating a bit
                 trimmed = accumulated.strip()
+
+                # Safety short-circuits
                 if trimmed in ("IGNORED", "PERSONAL"):
                     yield _sse({"type": "token", "text": token})
                     break
 
                 yield _sse({"type": "token", "text": token})
 
-            # Send sources event
+            # Send sources
             yield _sse({"type": "sources", "sources": sources})
 
-            # Persist AI reply to DB
-            if user and active_conv_id and accumulated.strip() not in ("IGNORED", "PERSONAL"):
+            # Persist AI reply and update memory (logged-in only)
+            reply_text = accumulated.strip()
+            if user and active_conv_id and reply_text not in ("IGNORED", "PERSONAL") and reply_text:
                 await _save_message(
                     active_conv_id, user.user_id, "assistant", accumulated, sources
                 )
-                # Background memory update — don't await, fire and forget
                 asyncio.create_task(
-                    update_user_memory(user.user_id, latest_user_msg, accumulated)
+                    update_user_memory(user.user_id, raw_message, accumulated)
                 )
 
-            # Send conv_id so frontend can track the conversation
+            # Always send done with conv_id so frontend can track it
             yield _sse({
                 "type":    "done",
-                "conv_id": active_conv_id or req.id,
+                "conv_id": active_conv_id or session_id,
             })
 
         except Exception as exc:
-            log.error("Stream error: %s", exc)
-            yield _sse({"type": "error", "text": "Something went wrong."})
+            log.error("Stream error: %s", exc, exc_info=True)
+            yield _sse({"type": "error", "text": "Something went wrong. Please try again."})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
