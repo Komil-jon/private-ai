@@ -258,11 +258,12 @@ function renderAuthState(user) {
 document.getElementById('drawer-login-btn').addEventListener('click', function (e) {
   e.preventDefault();
   var redirect = encodeURIComponent(window.location.href);
-  window.location.href = AUTH_BASE + '?redirect=' + redirect;
+  // prompt=login tells the auth server to always show the login form,
+  // even if a valid session already exists there (standard OAuth2 pattern).
+  window.location.href = AUTH_BASE + '?redirect=' + redirect + '&prompt=login';
 });
 
 document.getElementById('drawer-logout-btn').addEventListener('click', function () {
-  // 1. Clear this app's local state immediately — UI reflects logout right away.
   localStorage.removeItem('eternal_token');
   localStorage.removeItem('eternal_user');
   localStorage.removeItem('obelius_last_conv');
@@ -273,24 +274,6 @@ document.getElementById('drawer-logout-btn').addEventListener('click', function 
   renderAuthState(null);
   clearChat();
   firstMessage();
-
-  // 2. Clear auth.eternal.uz's own localStorage without navigating away.
-  //    A hidden iframe loads /logout on the auth origin, which runs JS to
-  //    removeItem there, then the iframe is discarded. Next time the user
-  //    visits auth.eternal.uz the session will be gone and they must log in.
-  try {
-    var frame = document.createElement('iframe');
-    frame.style.display = 'none';
-    frame.src = AUTH_BASE + '/logout';
-    frame.onload = function () {
-      setTimeout(function () {
-        if (frame.parentNode) frame.parentNode.removeChild(frame);
-      }, 500);
-    };
-    document.body.appendChild(frame);
-  } catch (e) {
-    console.warn('[auth] iframe logout failed:', e);
-  }
 });
 
 /* =======================
