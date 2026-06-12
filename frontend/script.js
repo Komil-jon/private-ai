@@ -5,9 +5,10 @@
 /* =======================
    STATE
 ======================= */
-var currentUser  = null;
-var currentToken = null;
-var activeConvId = null;
+var currentUser      = null;
+var currentToken     = null;
+var activeConvId     = null;
+var conversationList = [];   // in-memory cache of loaded conversations
 
 // Guest session id — used as document-store key for uploads
 var id = getOrCreateSessionId();
@@ -174,8 +175,26 @@ async function checkAuth() {
 }
 
 async function startFreshConversation() {
-  // Create a conversation in DB so the first message has a home
   if (!currentUser) return;
+
+  // Reuse the first untitled conversation if one already exists —
+  // avoids piling up blank "New conversation" entries on every login/reload.
+  var existing = conversationList.find(function (c) {
+    return c.title === 'New conversation';
+  });
+  if (existing) {
+    activeConvId = existing.id;
+    localStorage.setItem('obelius_last_conv', existing.id);
+    // Highlight it in the sidebar
+    document.querySelectorAll('.conv-item').forEach(function (el) {
+      el.classList.toggle('active', el.getAttribute('data-id') === existing.id);
+    });
+    hideLoadingMessage();
+    firstMessage();
+    return;
+  }
+
+  // No untitled conversation exists — create one
   try {
     var resp = await authFetch('/api/conversations', {
       method:  'POST',
@@ -186,7 +205,6 @@ async function startFreshConversation() {
       var conv = await resp.json();
       activeConvId = conv.id;
       localStorage.setItem('obelius_last_conv', conv.id);
-      // Refresh list so the new blank conversation appears
       await loadConversations();
     }
   } catch (e) {
@@ -244,21 +262,35 @@ document.getElementById('drawer-login-btn').addEventListener('click', function (
 });
 
 document.getElementById('drawer-logout-btn').addEventListener('click', function () {
-  // Clear local state immediately so the UI updates right away
+  // 1. Clear this app's local state immediately — UI reflects logout right away.
   localStorage.removeItem('eternal_token');
   localStorage.removeItem('eternal_user');
   localStorage.removeItem('obelius_last_conv');
-  currentToken = null;
-  currentUser  = null;
-  activeConvId = null;
+  currentToken     = null;
+  currentUser      = null;
+  activeConvId     = null;
+  conversationList = [];
   renderAuthState(null);
   clearChat();
   firstMessage();
 
-  // Bounce through auth.eternal.uz/logout so it clears its own localStorage too.
-  // After clearing, the auth server redirects back here and the user stays on the page.
-  var returnUrl = encodeURIComponent(window.location.href);
-  window.location.href = AUTH_BASE + '/logout?redirect=' + returnUrl;
+  // 2. Clear auth.eternal.uz's own localStorage without navigating away.
+  //    A hidden iframe loads /logout on the auth origin, which runs JS to
+  //    removeItem there, then the iframe is discarded. Next time the user
+  //    visits auth.eternal.uz the session will be gone and they must log in.
+  try {
+    var frame = document.createElement('iframe');
+    frame.style.display = 'none';
+    frame.src = AUTH_BASE + '/logout';
+    frame.onload = function () {
+      setTimeout(function () {
+        if (frame.parentNode) frame.parentNode.removeChild(frame);
+      }, 500);
+    };
+    document.body.appendChild(frame);
+  } catch (e) {
+    console.warn('[auth] iframe logout failed:', e);
+  }
 });
 
 /* =======================
@@ -277,10 +309,11 @@ async function loadConversations() {
 }
 
 function renderConversationList(convs) {
+  conversationList = convs || [];   // keep cache in sync
   var list = document.getElementById('conv-list');
   if (!list) return;
 
-  if (!convs || convs.length === 0) {
+  if (!conversationList.length) {
     list.innerHTML = '<div class="conv-empty">No conversations yet.</div>';
     return;
   }
@@ -381,6 +414,32 @@ async function openConversation(convId, clearScreen) {
 ======================= */
 async function newConversation() {
   if (!currentUser) return;
+
+  // If the current conversation has no user messages yet, there is nothing
+  // to leave behind — just close the drawer, we're already "new".
+  var hasMessages = $('.mCSB_container').find('.message-personal').length > 0;
+  if (!hasMessages && activeConvId) {
+    closeDrawer();
+    return;
+  }
+
+  // Current conversation has content — find or create a blank one.
+  // Prefer reusing an existing untitled conversation over creating a new one.
+  var existing = conversationList.find(function (c) {
+    return c.title === 'New conversation' && c.id !== activeConvId;
+  });
+  if (existing) {
+    activeConvId = existing.id;
+    localStorage.setItem('obelius_last_conv', existing.id);
+    clearChat();
+    firstMessage();
+    document.querySelectorAll('.conv-item').forEach(function (el) {
+      el.classList.toggle('active', el.getAttribute('data-id') === existing.id);
+    });
+    closeDrawer();
+    return;
+  }
+
   try {
     var resp = await authFetch('/api/conversations', {
       method:  'POST',
