@@ -299,7 +299,7 @@ Source Chips
   font-size: 0.7vh;
   font-weight: normal;
   white-space: nowrap;
-  max-width: 14vh;
+  max-width: 22vh;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: default;
@@ -338,6 +338,30 @@ Source Chips
   background: rgba(255, 228, 181, 0.28);
   border-color: moccasin;
   color: moccasin;
+}
+
+/* Search debug indicator — shown above the AI reply when web search ran */
+.search-indicator {
+  font-size: 0.72vh;
+  font-weight: normal;
+  color: rgba(130, 200, 255, 0.65);
+  padding: 0.15vh 0 0.4vh 0;
+  margin-left: 0.2vh;
+  letter-spacing: 0.01em;
+}
+
+/* Web source chips — clickable links */
+.source-chip.web-chip {
+  text-decoration: none;
+  cursor: pointer;
+}
+.source-chip.web-chip:hover {
+  background: rgba(130, 200, 255, 0.15);
+  border-color: rgba(130, 200, 255, 0.45);
+  color: #a8d8ff;
+}
+.source-chip.web-chip i {
+  color: rgba(130, 200, 255, 0.65);
 }
 
 /*--------------------

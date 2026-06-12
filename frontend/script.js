@@ -633,7 +633,18 @@ function sendMessageToServer(message) {
           var evt;
           try { evt = JSON.parse(jsonStr); } catch (e) { return; }
 
-          if (evt.type === 'token') {
+          if (evt.type === 'search_info') {
+            if (evt.triggered) {
+              var label = evt.results_count > 0
+                ? '&#x1F50D; Searched “' + escapeHtmlInline(evt.query || '') + '” · ' + evt.results_count + ' result' + (evt.results_count !== 1 ? 's' : '')
+                : '&#x1F50D; Searched “' + escapeHtmlInline(evt.query || '') + '” · no results found';
+              var indicator = $('<div class="search-indicator"></div>').html(label);
+              bubble.find('.message-content').before(indicator);
+              updateScrollbar();
+            }
+          }
+
+          else if (evt.type === 'token') {
             accumulated += evt.text;
             var trimmed = accumulated.trim();
 
@@ -733,14 +744,39 @@ function finaliseStreamingBubble(bubble, fullText, sources) {
 }
 
 function buildSourceChips(sources) {
+  // Deduplicate doc chips: one chip per filename, highest score wins
+  var docMap = {};
+  var webList = [];
+  (sources || []).forEach(function (src) {
+    if (src.type === 'web') {
+      webList.push(src);
+    } else {
+      var key = src.title || '';
+      if (!docMap[key] || (src.score || 0) > (docMap[key].score || 0)) {
+        docMap[key] = src;
+      }
+    }
+  });
+  var deduped = Object.values(docMap).concat(webList);
+  if (!deduped.length) return $('');
+
   var html = '<div class="source-chips">';
-  sources.forEach(function (src, i) {
+  deduped.forEach(function (src, i) {
     var label = src.title || src.file || src.name || ('Source ' + (i + 1));
-    var page  = src.page ? ' · p.' + src.page : '';
-    html +=
-      '<span class="source-chip" title="' + escapeHtmlInline(label + page) + '">' +
-      '<i class="fa-solid fa-bookmark"></i> ' + escapeHtmlInline(label) + page +
-      '</span>';
+    var score = src.score ? ' · ' + Math.round(src.score * 100) + '%' : '';
+
+    if (src.type === 'web' && src.url) {
+      html +=
+        '<a class="source-chip web-chip" href="' + escapeHtmlInline(src.url) + '" ' +
+        'target="_blank" rel="noopener noreferrer" title="' + escapeHtmlInline(src.url) + '">' +
+        '<i class="fa-solid fa-globe"></i> ' + escapeHtmlInline(label) +
+        '</a>';
+    } else {
+      html +=
+        '<span class="source-chip" title="' + escapeHtmlInline(label + score) + '">' +
+        '<i class="fa-solid fa-bookmark"></i> ' + escapeHtmlInline(label) + score +
+        '</span>';
+    }
   });
   html += '</div>';
   return $(html);
@@ -964,6 +1000,8 @@ document.addEventListener('click', function (e) {
     var formData = new FormData();
     stagedFiles.forEach(function (sf) { formData.append('files', sf.file); });
     formData.append('session_id', id);
+    // Tag upload to the current conversation so documents don't bleed across chats
+    if (activeConvId) formData.append('conv_id', activeConvId);
 
     stagedFiles.forEach(function (sf) { setItemState(sf.id, 'uploading'); });
     uploadSubmitBtn.disabled = true;

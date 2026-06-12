@@ -12,7 +12,7 @@ Returns JSON: { message, files }
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
-from typing import List
+from typing import List, Optional
 import os
 import shutil
 
@@ -34,9 +34,14 @@ MAX_FILE_SIZE_MB   = 20
 async def upload_files(
     session_id: str = Form(...),
     files: List[UploadFile] = File(...),
+    conv_id: Optional[str] = Form(None),
 ):
     if not session_id or not session_id.startswith("sess_"):
         raise HTTPException(status_code=400, detail="Invalid session_id.")
+
+    # Use conv_id as the document store key when available so that uploads
+    # are scoped to a specific conversation rather than the whole browser session.
+    store_key = conv_id if conv_id else session_id
 
     # Per-session upload directory
     session_dir = os.path.join(UPLOAD_ROOT, session_id)
@@ -74,9 +79,9 @@ async def upload_files(
                 errors.append(f"{filename}: could not extract text")
                 continue
 
-            chunk_count = store_document(session_id, filename, pages)
+            chunk_count = store_document(store_key, filename, pages)
             processed.append(filename)
-            print(f"[upload] {filename} → {chunk_count} chunks stored for session {session_id}")
+            print(f"[upload] {filename} → {chunk_count} chunks (key={store_key})")
 
         except Exception as e:
             print(f"[upload] Error processing {filename}: {e}")

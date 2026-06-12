@@ -13,6 +13,7 @@ from app.routes.process import router as process_router
 from app.routes.upload  import router as upload_router
 from app.routes.history import router as history_router
 from app.services.mongo import init_db, close_db
+from app.services.document_store import init_docstore
 
 BASE_DIR     = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -23,6 +24,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
+    import asyncio, concurrent.futures
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        await loop.run_in_executor(pool, init_docstore)
     yield
     await close_db()
 
