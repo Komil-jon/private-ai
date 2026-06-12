@@ -244,6 +244,7 @@ document.getElementById('drawer-login-btn').addEventListener('click', function (
 });
 
 document.getElementById('drawer-logout-btn').addEventListener('click', function () {
+  // Clear local state immediately so the UI updates right away
   localStorage.removeItem('eternal_token');
   localStorage.removeItem('eternal_user');
   localStorage.removeItem('obelius_last_conv');
@@ -253,6 +254,11 @@ document.getElementById('drawer-logout-btn').addEventListener('click', function 
   renderAuthState(null);
   clearChat();
   firstMessage();
+
+  // Bounce through auth.eternal.uz/logout so it clears its own localStorage too.
+  // After clearing, the auth server redirects back here and the user stays on the page.
+  var returnUrl = encodeURIComponent(window.location.href);
+  window.location.href = AUTH_BASE + '/logout?redirect=' + returnUrl;
 });
 
 /* =======================
