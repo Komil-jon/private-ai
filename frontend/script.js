@@ -58,11 +58,18 @@ var AUTH_BASE = 'https://auth.eternal.uz';
 
 /* Pick up token from URL after OAuth redirect, then clean the URL */
 (function handleAuthCallback() {
+  // Check query params (?token= or ?eternal_token=)
   var params = new URLSearchParams(window.location.search);
   var urlToken = params.get('token') || params.get('eternal_token');
+
+  // Also check hash fragment (#token= or #eternal_token=)
+  if (!urlToken && window.location.hash) {
+    var hashParams = new URLSearchParams(window.location.hash.slice(1));
+    urlToken = hashParams.get('token') || hashParams.get('eternal_token');
+  }
+
   if (urlToken) {
     localStorage.setItem('eternal_token', urlToken);
-    // Strip the token from the address bar without a page reload
     params.delete('token');
     params.delete('eternal_token');
     var clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
@@ -72,7 +79,41 @@ var AUTH_BASE = 'https://auth.eternal.uz';
 
 async function checkAuth() {
   try {
+    // 1. Prefer an explicit token in localStorage
     var token = localStorage.getItem('eternal_token');
+
+    // 2. Fall back to extracting the token from eternal_user (auth server stores it there)
+    if (!token) {
+      var storedUser = localStorage.getItem('eternal_user');
+      if (storedUser) {
+        try {
+          var parsedUser = JSON.parse(storedUser);
+          // Auth server may embed the token inside the user object
+          if (parsedUser.token) {
+            token = parsedUser.token;
+            localStorage.setItem('eternal_token', token);
+          } else {
+            // No token field — trust the stored user data directly
+            currentToken = null;
+            currentUser  = parsedUser;
+            renderAuthState(currentUser);
+            await loadConversations();
+            var lastConv = localStorage.getItem('obelius_last_conv');
+            if (lastConv) {
+              var restored = await openConversation(lastConv, true);
+              if (!restored) {
+                localStorage.removeItem('obelius_last_conv');
+                await startFreshConversation();
+              }
+            } else {
+              await startFreshConversation();
+            }
+            return;
+          }
+        } catch (e) { /* malformed JSON — ignore */ }
+      }
+    }
+
     if (!token) {
       renderAuthState(null);
       hideLoadingMessage();
@@ -134,15 +175,12 @@ async function checkAuth() {
 
 async function startFreshConversation() {
   // Create a conversation in DB so the first message has a home
-  if (!currentToken) return;
+  if (!currentUser) return;
   try {
-    var resp = await fetch('/api/conversations', {
+    var resp = await authFetch('/api/conversations', {
       method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': 'Bearer ' + currentToken,
-      },
-      body: JSON.stringify({}),
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({}),
     });
     if (resp.ok) {
       var conv = await resp.json();
@@ -156,6 +194,22 @@ async function startFreshConversation() {
   }
   hideLoadingMessage();
   firstMessage();
+}
+
+/* =======================
+   AUTH FETCH HELPER
+   Builds headers + credentials for API calls.
+   Sends Bearer token when available, falls back to cookies.
+======================= */
+function authFetch(url, options) {
+  options = options || {};
+  var headers = Object.assign({}, options.headers || {});
+  if (currentToken) {
+    headers['Authorization'] = 'Bearer ' + currentToken;
+  }
+  options.headers     = headers;
+  options.credentials = 'include'; // send eternal_token cookie as fallback
+  return fetch(url, options);
 }
 
 /* =======================
@@ -205,11 +259,9 @@ document.getElementById('drawer-logout-btn').addEventListener('click', function 
    CONVERSATIONS — load list
 ======================= */
 async function loadConversations() {
-  if (!currentToken) return;
+  if (!currentUser) return;
   try {
-    var resp = await fetch('/api/conversations', {
-      headers: { 'Authorization': 'Bearer ' + currentToken }
-    });
+    var resp = await authFetch('/api/conversations');
     if (!resp.ok) return;
     var convs = await resp.json();
     renderConversationList(convs);
@@ -262,12 +314,10 @@ function renderConversationList(convs) {
    Returns true if conversation was found and loaded, false if not found.
 ======================= */
 async function openConversation(convId, clearScreen) {
-  if (!currentToken) return false;
+  if (!currentUser) return false;
 
   try {
-    var resp = await fetch('/api/conversations/' + convId + '/messages', {
-      headers: { 'Authorization': 'Bearer ' + currentToken }
-    });
+    var resp = await authFetch('/api/conversations/' + convId + '/messages');
 
     // 404 means conversation no longer exists
     if (resp.status === 404) return false;
@@ -324,15 +374,12 @@ async function openConversation(convId, clearScreen) {
    CONVERSATIONS — new
 ======================= */
 async function newConversation() {
-  if (!currentToken) return;
+  if (!currentUser) return;
   try {
-    var resp = await fetch('/api/conversations', {
+    var resp = await authFetch('/api/conversations', {
       method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': 'Bearer ' + currentToken,
-      },
-      body: JSON.stringify({}),
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({}),
     });
     if (!resp.ok) return;
     var conv = await resp.json();
@@ -351,12 +398,9 @@ async function newConversation() {
    CONVERSATIONS — delete
 ======================= */
 async function deleteConversation(convId) {
-  if (!currentToken) return;
+  if (!currentUser) return;
   try {
-    await fetch('/api/conversations/' + convId, {
-      method:  'DELETE',
-      headers: { 'Authorization': 'Bearer ' + currentToken },
-    });
+    await authFetch('/api/conversations/' + convId, { method: 'DELETE' });
     if (activeConvId === convId) {
       activeConvId = null;
       localStorage.removeItem('obelius_last_conv');
@@ -371,12 +415,9 @@ async function deleteConversation(convId) {
 }
 
 async function deleteAllConversations() {
-  if (!currentToken) return;
+  if (!currentUser) return;
   try {
-    await fetch('/api/conversations/all', {
-      method:  'DELETE',
-      headers: { 'Authorization': 'Bearer ' + currentToken },
-    });
+    await authFetch('/api/conversations/all', { method: 'DELETE' });
     activeConvId = null;
     localStorage.removeItem('obelius_last_conv');
     clearChat();
@@ -518,7 +559,7 @@ function sendMessageToServer(message) {
   // Always include conv_id if we have one — backend uses it to find/create the conversation
   if (activeConvId) body.conv_id = activeConvId;
 
-  fetch('/stream', { method: 'POST', headers: headers, body: JSON.stringify(body) })
+  fetch('/stream', { method: 'POST', headers: headers, body: JSON.stringify(body), credentials: 'include' })
   .then(function (res) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     hideLoadingMessage();
@@ -883,7 +924,7 @@ document.addEventListener('click', function (e) {
     var headers = {};
     if (currentToken) headers['Authorization'] = 'Bearer ' + currentToken;
 
-    fetch('/upload', { method: 'POST', headers: headers, body: formData })
+    fetch('/upload', { method: 'POST', headers: headers, body: formData, credentials: 'include' })
     .then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
     .then(function (data) {
       stagedFiles.forEach(function (sf) { setItemState(sf.id, 'success'); });
