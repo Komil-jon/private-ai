@@ -46,11 +46,12 @@ class ConversationOut(BaseModel):
 
 
 class MessageOut(BaseModel):
-    id:      str
-    role:    str
-    content: str
-    sources: list = []
-    ts:      str
+    id:          str
+    role:        str
+    content:     str
+    sources:     list = []
+    search_info: Optional[dict] = None
+    ts:          str
 
 
 class NewConvBody(BaseModel):
@@ -170,6 +171,7 @@ async def get_messages(
             role=msg["role"],
             content=msg["content"],
             sources=msg.get("sources", []),
+            search_info=msg.get("search_info"),
             ts=_ts(msg.get("ts")),
         ))
     return result

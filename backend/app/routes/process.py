@@ -18,7 +18,7 @@ from app.services.auth_dep import optional_user, UserContext
 from app.services.mongo import conversations, messages
 from app.services.memory import get_user_profile, update_user_memory
 from app.services.document_store import retrieve_context, session_has_documents
-from app.services.llm_service import stream_reply, rewrite_search_query
+from app.services.llm_service import stream_reply, plan_search_queries
 from app.services import web_search as ws
 from app.models.schemas import ProcessRequest, Message
 
@@ -101,17 +101,21 @@ async def _auto_title(conv_id: str, first_user_message: str) -> None:
 
 
 async def _save_message(
-    conv_id: str, user_id: str, role: str, content: str, sources: list
+    conv_id: str, user_id: str, role: str, content: str, sources: list,
+    search_info: Optional[dict] = None,
 ) -> None:
     try:
-        await messages().insert_one({
+        doc = {
             "conv_id":  conv_id,
             "user_id":  user_id,
             "role":     role,
             "content":  content,
             "sources":  sources,
             "ts":       datetime.now(timezone.utc),
-        })
+        }
+        if search_info:
+            doc["search_info"] = search_info
+        await messages().insert_one(doc)
         await conversations().update_one(
             {"_id": ObjectId(conv_id)},
             {"$set": {"updated_at": datetime.now(timezone.utc)}},
@@ -214,18 +218,37 @@ async def stream(
     # Step 3: stream_reply (below) synthesises the final answer from all context.
     web_results      = []
     web_attempted    = False
-    search_query     = raw_message
+    search_query     = raw_message   # single display label (first planned query)
+    planned_queries: List[str] = []
     if raw_message and _needs_web_search(raw_message, bool(context_chunks)):
         web_attempted = True
         loop_ref = asyncio.get_running_loop()
-        search_query = await loop_ref.run_in_executor(
-            None, lambda: rewrite_search_query(raw_message)
+
+        # Pass last 4 turns as context so the planner resolves follow-up references
+        prior_turns = [m for m in conversation[:-1] if m.role in ("user", "assistant")][-4:]
+        context_for_rewrite = "\n".join(
+            f"{m.role}: {m.content[:120]}" for m in prior_turns
         )
+
+        # Step 1: plan 1–3 search queries (splits comparisons, multi-topic, etc.)
+        planned_queries = await loop_ref.run_in_executor(
+            None, lambda: plan_search_queries(raw_message, context=context_for_rewrite)
+        )
+        search_query = planned_queries[0] if planned_queries else raw_message
+
+        # Step 2: run all queries in parallel
         web_results = await loop_ref.run_in_executor(
-            None, lambda: ws.search(search_query, max_results=5, original_query=raw_message)
+            None, lambda: ws.search_multiple(
+                planned_queries, max_results_per_query=4, original_query=raw_message
+            )
         )
-        log.info("Agentic search: original=%r rewritten=%r results=%d",
-                 raw_message[:60], search_query, len(web_results))
+        log.info("Search pipeline: queries=%r total_results=%d", planned_queries, len(web_results))
+
+        # Step 3: fetch actual page content for top results
+        if web_results:
+            web_results = await loop_ref.run_in_executor(
+                None, lambda: ws.enrich_with_content(web_results, max_pages=3)
+            )
 
     web_sources = [
         {"type": "web", "title": r.get("title", "Web result"), "url": r.get("url", "")}
@@ -253,6 +276,7 @@ async def stream(
             yield _sse({
                 "type":          "search_info",
                 "triggered":     web_attempted,
+                "queries":       planned_queries if web_attempted else [],
                 "query":         search_query if web_attempted else None,
                 "results_count": len(web_results),
             })
@@ -284,8 +308,14 @@ async def stream(
             # Persist AI reply and update memory (logged-in only)
             reply_text = accumulated.strip()
             if user and active_conv_id and reply_text not in ("IGNORED", "PERSONAL") and reply_text:
+                saved_search_info = {
+                    "queries":       planned_queries,
+                    "query":         search_query,   # first query, kept for backward compat
+                    "results_count": len(web_results),
+                } if web_attempted else None
                 await _save_message(
-                    active_conv_id, user.user_id, "assistant", accumulated, all_sources
+                    active_conv_id, user.user_id, "assistant", accumulated, all_sources,
+                    search_info=saved_search_info,
                 )
                 asyncio.create_task(
                     update_user_memory(user.user_id, raw_message, accumulated)

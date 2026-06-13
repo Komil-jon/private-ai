@@ -32,39 +32,75 @@ if not API_KEY:
 client = genai.Client(api_key=API_KEY)
 
 
-# ── Step 1 of agentic search: query rewriter ────────────────────────────────
+# ── Step 1 of agentic search: multi-query planner ───────────────────────────
+# The planner decides HOW MANY searches are needed and WHAT to search.
+# Comparisons → one query per item. Multi-topic → one per topic. Simple → one.
 
-_REWRITE_PROMPT = """\
-Convert the following user message into a concise, effective web search query.
-Output ONLY the search query — no explanation, no quotes, no punctuation at the end.
+_PLAN_QUERIES_PROMPT = """\
+You are a search query planner for an AI assistant.
+Given a user message, output the web search queries needed to answer it fully.
 
-Examples
-  "tell me the weather in birmingham right now pls" → weather Birmingham UK today
-  "what is the current time in tashkent"            → current time Tashkent Uzbekistan
-  "latest news about openai"                        → OpenAI latest news 2026
-  "how much does a iphone 16 cost"                  → iPhone 16 price 2026
+Rules:
+- Comparison / "A vs B" / "which is better" questions: one query PER item being compared
+- Questions mentioning multiple distinct topics: one query per topic
+- Simple single-topic questions: exactly 1 query
+- Follow-up questions (uses "it", "they", "that team", etc.): resolve the reference from context, then output 1-2 queries
+- Maximum 3 queries total
+- Output ONLY the queries, one per line — no numbers, no bullets, no explanation
+- Each query must be concise and optimised for a search engine (include year/specifics where useful)
+
+Recent conversation context (resolve pronouns / references using this):
+{context}
+
+Examples:
+  message: "which book is more scientific: Subtle Art of Not Giving a Fuck or Surrounded by Idiots"
+  → The Subtle Art of Not Giving a Fuck scientific accuracy psychology evidence
+  → Surrounded by Idiots Thomas Erikson DISC model scientific validity criticism
+
+  message: "compare iphone 16 vs samsung s25 camera"
+  → iPhone 16 camera quality review 2025
+  → Samsung Galaxy S25 camera quality review 2025
+
+  message: "which team will win" (context: user was asking about World Cup)
+  → FIFA World Cup 2026 winner prediction favorites
+
+  message: "weather in birmingham"
+  → weather Birmingham UK today
+
+  message: "latest openai news"
+  → OpenAI latest news 2026
 
 User message: {message}
-Search query:"""
+Search queries (one per line):"""
 
 
-def rewrite_search_query(user_message: str) -> str:
+def plan_search_queries(user_message: str, context: str = "") -> List[str]:
     """
-    LLM call 1 of 2 in the agentic search pipeline.
-    Converts a natural-language user message into an optimised search engine query.
-    Falls back to the original message if the call fails.
+    Returns 1–3 optimised search queries for the user message.
+    For comparisons/multi-topic questions returns one query per item so each
+    topic gets its own search results rather than one muddled combined query.
+    Falls back to the original message on any failure.
     """
     if not user_message.strip():
-        return user_message
+        return [user_message]
     try:
-        prompt = _REWRITE_PROMPT.format(message=user_message.strip())
+        prompt = _PLAN_QUERIES_PROMPT.format(
+            context=context.strip() or "(none)",
+            message=user_message.strip(),
+        )
         resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        rewritten = (resp.text or "").strip().strip('"').strip("'")
-        log.info("Query rewrite: %r → %r", user_message[:60], rewritten[:80])
-        return rewritten or user_message
+        lines = (resp.text or "").strip().split("\n")
+        queries: List[str] = []
+        for line in lines:
+            q = line.strip().lstrip("-•*0123456789.)").strip()
+            if q and len(q) > 3:
+                queries.append(q)
+        queries = queries[:3]
+        log.info("Query plan: %r → %d queries: %r", user_message[:60], len(queries), queries)
+        return queries or [user_message]
     except Exception as exc:
-        log.warning("Query rewrite failed: %s — using original", exc)
-        return user_message
+        log.warning("Query planning failed: %s — using original message", exc)
+        return [user_message]
 
 
 # ── shared prompt builder ────────────────────────────────────────────────────
@@ -99,13 +135,17 @@ def _build_prompt(
     web_block = ""
     if has_web:
         web_block = "\n\n--- LIVE WEB SEARCH RESULTS ---\n"
-        web_block += "Current results fetched from the web for this query. "
-        web_block += "Use them for up-to-date information and always cite the URL.\n\n"
-        for i, result in enumerate(web_context):
+        web_block += "Full page content fetched from the web moments ago.\n"
+        web_block += "Results may come from multiple targeted searches — use ALL of them.\n"
+        web_block += "Extract and present the actual data. Do NOT respond with a list of websites.\n\n"
+        for i, result in enumerate(web_context[:8]):   # cap at 8 to keep prompt size sane
+            body = result.get("content") or result.get("snippet", "").strip()
+            query_tag = f" [search: {result['_query']}]" if result.get("_query") else ""
             web_block += (
-                f"[Web {i+1}] {result.get('title', 'Untitled')}\n"
+                f"[Web {i+1}]{query_tag}\n"
+                f"Title: {result.get('title', 'Untitled')}\n"
                 f"URL: {result.get('url', '')}\n"
-                f"{result.get('snippet', '').strip()}\n\n"
+                f"{body}\n\n"
             )
         web_block += "--- END WEB RESULTS ---\n"
 
@@ -137,11 +177,15 @@ never explicitly say "I have a memory of you" or list facts robotically.
         )
     elif has_web:
         capability_block = (
-            "IMPORTANT — live web search results are already provided in the LIVE WEB SEARCH RESULTS section below.\n"
-            "These were fetched moments ago specifically for this query. "
-            "Answer directly using those results now. Cite the URL for every fact you state.\n"
+            "IMPORTANT — Live web results with actual page content are in this prompt.\n"
+            "Read the content and synthesize a DIRECT answer — the actual data the user asked for.\n"
+            "For weather: state temperature, conditions, forecast. "
+            "For sports: state match results and scores. "
+            "For prices/news: state the specific facts.\n"
+            "Cite sources naturally inline (e.g. 'According to BBC Weather, …') — "
+            "do NOT respond with just a list of website links.\n"
             "NEVER say 'give me a moment', 'let me check', 'I'll look that up', "
-            "'I am unable to browse the web', or anything similar. The results are already here."
+            "or 'I am unable to browse the web'. The data is already here — use it."
         )
     elif web_attempted:
         # Search was triggered but returned no results (rate-limit, no results found, etc.)
@@ -163,6 +207,8 @@ Rules:
 - If a question is inappropriate, respond with exactly: PERSONAL
 - If content is unsafe, respond with exactly: IGNORED
 - Remember details the user shares and use them to give more relevant answers
+- For sports, entertainment, or current-events predictions/opinions: give a real answer based on available data. Do NOT refuse or say you "cannot predict" — the user wants your informed take, not a disclaimer.
+- When the user asks "which team will win" or "who do you think will win", give a concrete prediction with reasoning from the search data. It is fine and expected.
 {time_line}{capability_block}
 {profile_block}{doc_block}{web_block}"""
 

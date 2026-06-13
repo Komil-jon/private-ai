@@ -3,6 +3,22 @@
    ============================================================ */
 
 /* =======================
+   MARKED.JS CONFIG
+   Open all links rendered from markdown in a new tab.
+======================= */
+marked.use({
+  renderer: {
+    link: function (token) {
+      var href  = token.href  || '';
+      var title = token.title || '';
+      var text  = token.text  || '';
+      var t = title ? ' title="' + title + '"' : '';
+      return '<a href="' + href + '"' + t + ' target="_blank" rel="noopener noreferrer">' + text + '</a>';
+    }
+  }
+});
+
+/* =======================
    STATE
 ======================= */
 var currentUser      = null;
@@ -20,11 +36,8 @@ var d, h, m;
    INITIAL LOAD
 ======================= */
 $(window).on('load', function () {
-  $messages.mCustomScrollbar();
-
   setTimeout(function () {
     showLoadingMessage();
-    // checkAuth handles everything — including showing first message
     checkAuth();
   }, 100);
 });
@@ -368,16 +381,27 @@ async function openConversation(convId, clearScreen) {
     msgs.forEach(function (msg) {
       if (msg.role === 'user') {
         $('<div class="message message-personal">' + escapeHtmlInline(msg.content) + '</div>')
-          .appendTo($('.mCSB_container'));
+          .appendTo($('.messages-content'));
       } else {
         var bubble  = $('<div class="message new"></div>');
         var avatar  = '<figure class="avatar"><img src="/static/images/icon.svg" /></figure>';
         var content = $('<div class="message-content"></div>').html(marked.parse(msg.content));
-        bubble.append(avatar).append(content);
+        bubble.append(avatar);
+        // Re-render search indicator if this message was backed by a web search
+        if (msg.search_info) {
+          var si = msg.search_info;
+          var siQueries = si.queries && si.queries.length ? si.queries : (si.query ? [si.query] : []);
+          if (siQueries.length) {
+            bubble.append($('<div>').addClass('search-indicator').html(
+              buildSearchLabel(siQueries, si.results_count)
+            ));
+          }
+        }
+        bubble.append(content);
         if (msg.sources && msg.sources.length > 0) {
           bubble.append(buildSourceChips(msg.sources));
         }
-        $('.mCSB_container').append(bubble);
+        $('.messages-content').append(bubble);
       }
     });
 
@@ -400,7 +424,7 @@ async function newConversation() {
 
   // If the current conversation has no user messages yet, there is nothing
   // to leave behind — just close the drawer, we're already "new".
-  var hasMessages = $('.mCSB_container').find('.message-personal').length > 0;
+  var hasMessages = $('.messages-content').find('.message-personal').length > 0;
   if (!hasMessages && activeConvId) {
     closeDrawer();
     return;
@@ -477,7 +501,7 @@ async function deleteAllConversations() {
 }
 
 function clearChat() {
-  $('.mCSB_container').empty();
+  $('.messages-content').empty();
 }
 
 /* =======================
@@ -537,10 +561,41 @@ document.getElementById('delete-all-btn').addEventListener('click', function (e)
 /* =======================
    SCROLL
 ======================= */
+var _scrollPending = false;
 function updateScrollbar() {
-  $messages
-    .mCustomScrollbar('update')
-    .mCustomScrollbar('scrollTo', 'bottom', { scrollInertia: 10, timeout: 0 });
+  if (_scrollPending) return;
+  _scrollPending = true;
+  requestAnimationFrame(function () {
+    var el = document.querySelector('.messages');
+    if (el) el.scrollTop = el.scrollHeight;
+    _scrollPending = false;
+  });
+}
+
+/* =======================
+   TOKEN QUEUE  (batch per animation frame for smooth streaming)
+======================= */
+var _tokenBubble  = null;
+var _tokenBuf     = '';
+var _tokenRafPending = false;
+
+function flushTokenBuffer() {
+  if (_tokenBubble && _tokenBuf) {
+    appendTokenToBubble(_tokenBubble, _tokenBuf);
+    _tokenBuf = '';
+    var el = document.querySelector('.messages');
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+  _tokenRafPending = false;
+}
+
+function queueToken(bubble, text) {
+  _tokenBubble = bubble;
+  _tokenBuf   += text;
+  if (!_tokenRafPending) {
+    _tokenRafPending = true;
+    requestAnimationFrame(flushTokenBuffer);
+  }
 }
 
 /* =======================
@@ -565,13 +620,21 @@ function insertMessage() {
   var msg = $('.message-input').val();
   if ($.trim(msg) === '') return false;
 
+  // Flush any in-progress streaming token before appending the user message
+  if (_tokenBuf && _tokenBubble) { flushTokenBuffer(); }
+
   $('<div class="message message-personal">' + escapeHtmlInline(msg) + '</div>')
-    .appendTo($('.mCSB_container'))
+    .appendTo($('.messages-content'))
     .addClass('new');
 
   setDate();
   $('.message-input').val(null);
-  updateScrollbar();
+
+  // Defer scroll one frame so the new message is in the DOM before we measure
+  requestAnimationFrame(function () {
+    var el = document.querySelector('.messages');
+    if (el) el.scrollTop = el.scrollHeight;
+  });
 
   sendMessageToServer(msg);
 }
@@ -635,10 +698,8 @@ function sendMessageToServer(message) {
 
           if (evt.type === 'search_info') {
             if (evt.triggered) {
-              var label = evt.results_count > 0
-                ? '&#x1F50D; Searched “' + escapeHtmlInline(evt.query || '') + '” · ' + evt.results_count + ' result' + (evt.results_count !== 1 ? 's' : '')
-                : '&#x1F50D; Searched “' + escapeHtmlInline(evt.query || '') + '” · no results found';
-              var indicator = $('<div class="search-indicator"></div>').html(label);
+              var queries = evt.queries && evt.queries.length ? evt.queries : (evt.query ? [evt.query] : []);
+              var indicator = $('<div>').addClass('search-indicator').html(buildSearchLabel(queries, evt.results_count));
               bubble.find('.message-content').before(indicator);
               updateScrollbar();
             }
@@ -666,8 +727,7 @@ function sendMessageToServer(message) {
               return;
             }
 
-            appendTokenToBubble(bubble, evt.text);
-            updateScrollbar();
+            queueToken(bubble, evt.text);
           }
 
           else if (evt.type === 'sources') {
@@ -721,7 +781,7 @@ function createStreamingBubble() {
   var cursor  = $('<span class="stream-cursor"></span>');
   content.append(cursor);
   bubble.append(avatar).append(content);
-  $('.mCSB_container').append(bubble);
+  $('.messages-content').append(bubble);
   updateScrollbar();
   return bubble;
 }
@@ -732,6 +792,10 @@ function appendTokenToBubble(bubble, token) {
 }
 
 function finaliseStreamingBubble(bubble, fullText, sources) {
+  // Flush any buffered tokens before finalising
+  if (_tokenBuf && _tokenBubble === bubble) { flushTokenBuffer(); }
+  _tokenBubble = null; _tokenBuf = '';
+
   var content = bubble.find('.message-content');
   content.find('.stream-cursor').remove();
   bubble.removeClass('streaming');
@@ -792,7 +856,7 @@ function receiveMessage(message, sources) {
   var content = $('<div class="message-content"></div>').html(marked.parse(message));
   bubble.append(avatar).append(content);
   if (sources && sources.length > 0) bubble.append(buildSourceChips(sources));
-  $('.mCSB_container').append(bubble);
+  $('.messages-content').append(bubble);
   setDate();
   updateScrollbar();
 }
@@ -810,7 +874,7 @@ function firstMessage() {
     '<figure class="avatar"><img src="/static/images/icon.svg" /></figure>' +
     '<div class="message-content">' + escapeHtmlInline(greeting) + '</div>' +
     '</div>')
-    .appendTo($('.mCSB_container'));
+    .appendTo($('.messages-content'));
 
   setDate();
   updateScrollbar();
@@ -821,7 +885,7 @@ function showLoadingMessage() {
   $('<div class="message loading new">' +
     '<figure class="avatar"><img src="/static/images/icon.svg" /></figure>' +
     '<span>Loading...</span></div>')
-    .appendTo($('.mCSB_container'));
+    .appendTo($('.messages-content'));
   updateScrollbar();
 }
 
@@ -1057,10 +1121,12 @@ document.addEventListener('click', function (e) {
 (function () {
   var textarea = document.querySelector('.message-input');
   if (!textarea) return;
+  var MAX_H = 8 * window.innerHeight / 100; // 8vh in px
   function autoGrow() {
-    textarea.style.height = 'auto';
-    textarea.style.height = textarea.scrollHeight + 'px';
-    textarea.style.overflowY = textarea.scrollHeight > textarea.clientHeight ? 'auto' : 'hidden';
+    textarea.style.height = '0';
+    var newH = Math.min(textarea.scrollHeight, MAX_H);
+    textarea.style.height = newH + 'px';
+    textarea.style.overflowY = textarea.scrollHeight > MAX_H ? 'auto' : 'hidden';
   }
   textarea.addEventListener('input', autoGrow);
   setInterval(function () {
@@ -1070,6 +1136,27 @@ document.addEventListener('click', function (e) {
     }
   }, 150);
 })();
+
+/* =======================
+   SEARCH INDICATOR HELPER
+======================= */
+function buildSearchLabel(queries, resultsCount) {
+  var MAX_Q_CHARS = 48;
+  var queryText;
+  if (!queries || !queries.length) {
+    queryText = 'web';
+  } else if (queries.length > 1) {
+    queryText = queries.length + ' searches';
+  } else {
+    var q = queries[0];
+    if (q.length > MAX_Q_CHARS) q = q.slice(0, MAX_Q_CHARS) + '…';
+    queryText = '&ldquo;' + escapeHtmlInline(q) + '&rdquo;';
+  }
+  var count = resultsCount || 0;
+  return count > 0
+    ? '&#x1F50D; Searched ' + queryText + ' &middot; ' + count + ' result' + (count !== 1 ? 's' : '')
+    : '&#x1F50D; Searched ' + queryText + ' &middot; no results';
+}
 
 /* =======================
    UTILITIES
