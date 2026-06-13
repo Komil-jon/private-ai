@@ -1,16 +1,14 @@
 """
 document_store.py — Qdrant Cloud-backed semantic document store
 ================================================================
-How it works:
-  Upload:   text chunks → fastembed (local ONNX model) → 384-dim vectors
-            → stored in Qdrant Cloud, tagged with session_id
+Embedding is done via Gemini text-embedding-004 API (768 dims) — no local
+ONNX model, no RAM spike, works fine on Render's free 512 MB tier.
 
-  Retrieve: query text → embed → Qdrant cosine nearest-neighbour search
-            filtered by session_id → top-k semantically relevant chunks
+Upload flow:
+  text chunks → Gemini embed API → 768-dim vectors → Qdrant Cloud
 
-Storage:   Qdrant Cloud free tier (QDRANT_URL + QDRANT_API_KEY env vars)
-           Falls back to local ./qdrant_data/ if env vars are not set.
-Model:     BAAI/bge-small-en-v1.5  (~130 MB, downloads once on first use)
+Retrieve flow:
+  query → Gemini embed API → cosine search in Qdrant Cloud → top-k chunks
 """
 
 from __future__ import annotations
@@ -20,6 +18,8 @@ import uuid
 import logging
 from typing import List, Dict, Any, Optional
 
+from dotenv import load_dotenv
+from google import genai
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -29,102 +29,116 @@ from qdrant_client.models import (
     FieldCondition,
     MatchValue,
     FilterSelector,
+    PayloadSchemaType,
 )
-from fastembed import TextEmbedding
+
+load_dotenv()
 
 log = logging.getLogger("obelius.docstore")
 
-# ── Tuneable constants ───────────────────────────────────────────────────────
-COLLECTION    = "company_docs"
-CHUNK_SIZE    = 400          # characters per chunk
-CHUNK_OVERLAP = 80           # overlap between consecutive chunks
-TOP_K           = 5            # chunks returned per query
-VECTOR_SIZE     = 384          # matches BAAI/bge-small-en-v1.5
-EMBED_MODEL     = "BAAI/bge-small-en-v1.5"
-BATCH_SIZE      = 64           # embedding batch size
-SCORE_THRESHOLD = 0.55         # minimum cosine similarity — below this the chunk is not relevant enough
+# ── Constants ─────────────────────────────────────────────────────────────────
+COLLECTION      = "company_docs"
+CHUNK_SIZE      = 400
+CHUNK_OVERLAP   = 80
+TOP_K           = 5
+VECTOR_SIZE     = 768          # Gemini text-embedding-004 output dimension
+EMBED_MODEL     = "text-embedding-004"
+EMBED_BATCH     = 50           # Gemini allows up to 100 per call; 50 is safe
+SCORE_THRESHOLD = 0.55
 
-# ── Lazy singletons (initialised on first use) ───────────────────────────────
-_client:   Optional[QdrantClient]  = None
-_embedder: Optional[TextEmbedding] = None
+# ── Lazy singletons ───────────────────────────────────────────────────────────
+_qdrant: Optional[QdrantClient] = None
+_gemini: Optional[genai.Client] = None
 
 
-# ── Initialisation ────────────────────────────────────────────────────────────
-
-def init_docstore() -> None:
-    """
-    Called once at server startup (from main.py lifespan).
-    Pre-warms the embedding model so the first upload isn't slow.
-    """
-    _get_client()
-    _get_embedder()
-    log.info("Document store ready (Qdrant + %s).", EMBED_MODEL)
+def _get_gemini() -> genai.Client:
+    global _gemini
+    if _gemini is None:
+        api_key = os.getenv("API_KEY", "")
+        if not api_key:
+            raise RuntimeError("API_KEY not set — cannot embed documents.")
+        _gemini = genai.Client(api_key=api_key)
+    return _gemini
 
 
 def _get_client() -> QdrantClient:
-    global _client
-    if _client is None:
-        qdrant_url = os.getenv("QDRANT_URL", "").strip()
-        qdrant_api_key = os.getenv("QDRANT_API_KEY", "").strip()
+    global _qdrant
+    if _qdrant is None:
+        url     = os.getenv("QDRANT_URL", "").strip()
+        api_key = os.getenv("QDRANT_API_KEY", "").strip()
 
-        if qdrant_url and qdrant_api_key:
-            log.info("Connecting to Qdrant Cloud at %s", qdrant_url)
-            _client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        if url and api_key:
+            log.info("Connecting to Qdrant Cloud at %s", url)
+            _qdrant = QdrantClient(url=url, api_key=api_key)
         else:
-            # Fallback: local file storage for development
             data_dir = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), "..", "..", "qdrant_data")
             )
             os.makedirs(data_dir, exist_ok=True)
-            log.warning("QDRANT_URL/QDRANT_API_KEY not set — falling back to local storage at %s", data_dir)
-            _client = QdrantClient(path=data_dir)
+            log.warning("QDRANT_URL/QDRANT_API_KEY not set — using local storage at %s", data_dir)
+            _qdrant = QdrantClient(path=data_dir)
 
-        _ensure_collection(_client)
-    return _client
-
-
-def _get_embedder() -> TextEmbedding:
-    global _embedder
-    if _embedder is None:
-        # Point fastembed's cache at a stable path so Render's persistent disk
-        # (or any deployment) only downloads the model once.
-        cache_dir = os.getenv("FASTEMBED_CACHE_PATH", os.path.join(os.path.expanduser("~"), ".cache", "fastembed"))
-        os.makedirs(cache_dir, exist_ok=True)
-        log.info("Loading embedding model %s (cache: %s)…", EMBED_MODEL, cache_dir)
-        _embedder = TextEmbedding(model_name=EMBED_MODEL, cache_dir=cache_dir)
-        log.info("Embedding model loaded.")
-    return _embedder
+        _ensure_collection(_qdrant)
+    return _qdrant
 
 
 def _ensure_collection(client: QdrantClient) -> None:
-    existing = {c.name for c in client.get_collections().collections}
+    existing = {c.name: c for c in client.get_collections().collections}
+
+    if COLLECTION in existing:
+        # If the collection was created with the old 384-dim fastembed vectors,
+        # delete and recreate it so dimensions match Gemini's 768.
+        info = client.get_collection(COLLECTION)
+        current_size = info.config.params.vectors.size
+        if current_size != VECTOR_SIZE:
+            log.warning(
+                "Collection '%s' has vector size %d but expected %d — recreating.",
+                COLLECTION, current_size, VECTOR_SIZE,
+            )
+            client.delete_collection(COLLECTION)
+            existing.pop(COLLECTION)
+
     if COLLECTION not in existing:
         client.create_collection(
             collection_name=COLLECTION,
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
-        log.info("Created Qdrant collection '%s'.", COLLECTION)
+        log.info("Created Qdrant collection '%s' (%d dims).", COLLECTION, VECTOR_SIZE)
 
-    # Qdrant Cloud requires a payload index on any field used in filters.
-    # create_payload_index is idempotent — safe to call on every startup.
-    from qdrant_client.models import PayloadSchemaType
-    client.create_payload_index(
-        collection_name=COLLECTION,
-        field_name="session_id",
-        field_schema=PayloadSchemaType.KEYWORD,
-    )
-    log.info("Payload index ensured for 'session_id' in '%s'.", COLLECTION)
+    # Qdrant Cloud requires a payload index for filtered fields.
+    try:
+        client.create_payload_index(
+            collection_name=COLLECTION,
+            field_name="session_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+    except Exception:
+        pass  # index already exists — safe to ignore
 
 
-# ── Embedding helper ─────────────────────────────────────────────────────────
+# ── Embedding ─────────────────────────────────────────────────────────────────
 
 def _embed(texts: List[str]) -> List[List[float]]:
-    """Embed a list of strings, return list of float vectors."""
-    embedder = _get_embedder()
-    return [vec.tolist() for vec in embedder.embed(texts)]
+    """
+    Embed texts using Gemini text-embedding-004.
+    Batches calls so we never exceed the API's per-request limit.
+    No local model loaded — zero RAM overhead.
+    """
+    client  = _get_gemini()
+    vectors = []
+
+    for i in range(0, len(texts), EMBED_BATCH):
+        batch  = texts[i : i + EMBED_BATCH]
+        result = client.models.embed_content(
+            model=EMBED_MODEL,
+            contents=batch,
+        )
+        vectors.extend(e.values for e in result.embeddings)
+
+    return vectors
 
 
-# ── Text chunking ─────────────────────────────────────────────────────────────
+# ── Chunking ──────────────────────────────────────────────────────────────────
 
 def _chunk_text(text: str) -> List[str]:
     text = text.strip()
@@ -139,62 +153,49 @@ def _chunk_text(text: str) -> List[str]:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def store_document(session_id: str, filename: str, pages: List[tuple]) -> int:
-    """
-    Chunk, embed, and store all pages of a document for a session.
-    Returns the total number of chunks stored.
+def init_docstore() -> None:
+    """Called at startup. Connects to Qdrant and verifies the collection."""
+    _get_client()
+    log.info("Document store ready (Qdrant Cloud + Gemini %s).", EMBED_MODEL)
 
-    pages: list of (page_index, text) from parser.py
-    """
+
+def store_document(session_id: str, filename: str, pages: List[tuple]) -> int:
+    """Chunk, embed, and store all pages of a document. Returns chunk count."""
     client = _get_client()
 
     all_texts: List[str] = []
     all_meta:  List[dict] = []
 
     for page_idx, text in pages:
-        for chunk_i, chunk_text in enumerate(_chunk_text(text)):
-            all_texts.append(chunk_text)
+        for chunk_i, chunk in enumerate(_chunk_text(text)):
+            all_texts.append(chunk)
             all_meta.append({
                 "session_id": session_id,
                 "filename":   filename,
                 "page":       page_idx,
                 "chunk_idx":  chunk_i,
-                "text":       chunk_text,
+                "text":       chunk,
             })
 
     if not all_texts:
         return 0
 
-    # Embed in batches to avoid memory spikes on large documents
-    all_vectors: List[List[float]] = []
-    for i in range(0, len(all_texts), BATCH_SIZE):
-        all_vectors.extend(_embed(all_texts[i : i + BATCH_SIZE]))
+    all_vectors = _embed(all_texts)
 
     points = [
-        PointStruct(
-            id=str(uuid.uuid4()),
-            vector=vec,
-            payload=meta,
-        )
+        PointStruct(id=str(uuid.uuid4()), vector=vec, payload=meta)
         for vec, meta in zip(all_vectors, all_meta)
     ]
 
-    # Upsert in batches
-    for i in range(0, len(points), BATCH_SIZE):
-        client.upsert(collection_name=COLLECTION, points=points[i : i + BATCH_SIZE])
+    for i in range(0, len(points), EMBED_BATCH):
+        client.upsert(collection_name=COLLECTION, points=points[i : i + EMBED_BATCH])
 
-    log.info(
-        "Stored %d chunks (session=%s, file=%s).",
-        len(points), session_id, filename,
-    )
+    log.info("Stored %d chunks (session=%s, file=%s).", len(points), session_id, filename)
     return len(points)
 
 
 def retrieve_context(session_id: str, query: str) -> List[Dict[str, Any]]:
-    """
-    Return the top-k most semantically relevant chunks for this session + query.
-    Returns [] if no documents have been uploaded for the session.
-    """
+    """Return top-k semantically relevant chunks for this session + query."""
     if not query.strip():
         return []
 
@@ -249,7 +250,6 @@ def clear_session(session_id: str) -> None:
     )
     log.info("Cleared Qdrant vectors for session=%s.", session_id)
 
-    # Keep Qdrant and Neo4j in sync
     from app.services.graph_store import clear_session_graph
     clear_session_graph(session_id)
 
