@@ -135,7 +135,7 @@ async function checkAuth() {
       return;
     }
 
-    var resp = await fetch(AUTH_BASE + '/api/verify', {
+    var resp = await fetch('/api/auth-verify', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ token: token }),

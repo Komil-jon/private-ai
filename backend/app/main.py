@@ -3,10 +3,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 import os
 
 from app.routes.process import router as process_router
@@ -47,6 +48,23 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 app.include_router(process_router)
 app.include_router(upload_router)
 app.include_router(history_router)
+
+
+@app.post("/api/auth-verify")
+async def auth_verify(request: Request) -> Response:
+    """Proxy to auth.eternal.uz — avoids browser CORS restrictions."""
+    body = await request.body()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        upstream = await client.post(
+            "https://auth.eternal.uz/api/verify",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json"),
+    )
 
 
 @app.get("/")
