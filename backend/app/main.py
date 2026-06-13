@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -8,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
-import os
 
 from app.routes.process import router as process_router
 from app.routes.upload  import router as upload_router
@@ -21,15 +22,67 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 UPLOAD_DIR   = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Add telegram/ dir to sys.path so our bot modules resolve without the 'telegram.' prefix.
+# This avoids shadowing the python-telegram-bot library (our dir has no __init__.py).
+_TELEGRAM_DIR = os.path.join(BASE_DIR, "telegram")
+if _TELEGRAM_DIR not in sys.path:
+    sys.path.insert(0, _TELEGRAM_DIR)
+
+BOT_MODE  = os.getenv("BOT_MODE", "polling")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    import logging as _log
+    _logger = _log.getLogger("obelius.main")
+
     await init_db()
     import asyncio, concurrent.futures
     loop = asyncio.get_event_loop()
     with concurrent.futures.ThreadPoolExecutor() as pool:
         await loop.run_in_executor(pool, init_docstore)
+
+    # Initialise Telegram session indexes regardless of bot mode
+    if BOT_TOKEN:
+        try:
+            from services.session import init_indexes   # telegram/ is on sys.path
+            await init_indexes()
+        except Exception as exc:
+            _logger.warning("Telegram session init skipped: %s", exc)
+
+    # Webhook mode: start bot application and register webhook with Telegram
+    if BOT_MODE == "webhook" and BOT_TOKEN:
+        try:
+            from telegram import BotCommandScopeAllPrivateChats
+            from bot import get_application, _COMMANDS   # our bot, telegram/ on sys.path
+            from config import WEBHOOK_URL, WEBHOOK_SECRET, WEBHOOK_PATH
+
+            tg_app = await get_application()
+            await tg_app.bot.set_my_commands(
+                _COMMANDS, scope=BotCommandScopeAllPrivateChats()
+            )
+            webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+            await tg_app.bot.set_webhook(
+                url=webhook_url,
+                secret_token=WEBHOOK_SECRET,
+                allowed_updates=["message", "callback_query", "inline_query"],
+                drop_pending_updates=True,
+            )
+            _logger.info("Telegram webhook registered: %s", webhook_url)
+        except Exception as exc:
+            _logger.error("Telegram webhook setup failed: %s", exc)
+
     yield
+
+    # Webhook mode: clean up bot application
+    if BOT_MODE == "webhook" and BOT_TOKEN:
+        try:
+            from bot import shutdown_application
+            await shutdown_application()
+        except Exception:
+            pass
+
     await close_db()
 
 
@@ -48,6 +101,10 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 app.include_router(process_router)
 app.include_router(upload_router)
 app.include_router(history_router)
+
+# Telegram bot support routes (login redirect, auth callback, webhook)
+from app.telegram_router import router as telegram_router
+app.include_router(telegram_router)
 
 
 @app.post("/api/auth-verify")
