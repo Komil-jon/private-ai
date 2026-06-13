@@ -86,8 +86,12 @@ def _get_client() -> QdrantClient:
 def _get_embedder() -> TextEmbedding:
     global _embedder
     if _embedder is None:
-        log.info("Loading embedding model %s (first run may download ~130 MB)…", EMBED_MODEL)
-        _embedder = TextEmbedding(model_name=EMBED_MODEL)
+        # Point fastembed's cache at a stable path so Render's persistent disk
+        # (or any deployment) only downloads the model once.
+        cache_dir = os.getenv("FASTEMBED_CACHE_PATH", os.path.join(os.path.expanduser("~"), ".cache", "fastembed"))
+        os.makedirs(cache_dir, exist_ok=True)
+        log.info("Loading embedding model %s (cache: %s)…", EMBED_MODEL, cache_dir)
+        _embedder = TextEmbedding(model_name=EMBED_MODEL, cache_dir=cache_dir)
         log.info("Embedding model loaded.")
     return _embedder
 
