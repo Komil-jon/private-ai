@@ -58,10 +58,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu(logged_in=True),
         )
-        await update.message.reply_text(
-            "Open the full web interface inside Telegram:",
-            reply_markup=web_app_keyboard(),
-        )
+        webapp_kb = web_app_keyboard()
+        if webapp_kb:
+            await update.message.reply_text(
+                "Open the full web interface inside Telegram:",
+                reply_markup=webapp_kb,
+            )
     else:
         state     = await create_auth_state(user.id)
         login_url = build_login_url(state)
@@ -91,7 +93,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=main_menu(logged_in=logged_in),
     )
     if logged_in:
-        await update.message.reply_text(
-            "Open the full web UI inside Telegram:",
-            reply_markup=web_app_keyboard(),
-        )
+        webapp_kb = web_app_keyboard()
+        if webapp_kb:
+            await update.message.reply_text(
+                "Open the full web UI inside Telegram:",
+                reply_markup=webapp_kb,
+            )

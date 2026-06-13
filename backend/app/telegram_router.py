@@ -25,18 +25,24 @@ log = logging.getLogger("obelius.tg.router")
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
-AUTH_BASE_URL  = os.getenv("AUTH_BASE_URL",  "https://auth.eternal.uz")
-BACKEND_URL    = os.getenv("BACKEND_URL",    "http://localhost:8001")
-BOT_MODE       = os.getenv("BOT_MODE",       "polling")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
-BOT_TOKEN      = os.getenv("BOT_TOKEN",      "")
-
-# Add telegram/ to sys.path so we can import our modules without 'telegram.' prefix
+# Add telegram/ to sys.path FIRST so config.py (which calls load_dotenv) is importable.
+# This must happen before reading any env vars so that the .env values are in os.environ.
 _TELEGRAM_DIR = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "telegram")
 )
 if _TELEGRAM_DIR not in sys.path:
     sys.path.insert(0, _TELEGRAM_DIR)
+
+# Import from telegram config — this triggers load_dotenv() and populates os.environ.
+try:
+    from config import BOT_TOKEN, BOT_MODE, WEBHOOK_SECRET, AUTH_BASE_URL, BACKEND_URL, WEBHOOK_URL
+except ImportError:
+    BOT_TOKEN      = os.getenv("BOT_TOKEN",      "")
+    BOT_MODE       = os.getenv("BOT_MODE",       "polling")
+    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+    AUTH_BASE_URL  = os.getenv("AUTH_BASE_URL",  "https://auth.eternal.uz")
+    BACKEND_URL    = os.getenv("BACKEND_URL",    "http://localhost:8001")
+    WEBHOOK_URL    = os.getenv("WEBHOOK_URL",    "")
 
 
 # ── Login redirect ────────────────────────────────────────────────────────────
@@ -144,19 +150,37 @@ async def telegram_callback(
 
     await save_session(telegram_id, jwt, user)
 
-    # Send proactive "Logged in!" message to user via Bot API
+    # Send proactive login confirmation to the Telegram chat with the main menu keyboard
     if BOT_TOKEN:
-        name = user.get("full_name") or user.get("username") or "there"
+        name  = user.get("full_name") or user.get("username") or "there"
+        email = user.get("email") or ""
+        main_menu_keyboard = {
+            "keyboard": [
+                [{"text": "💬 New Chat"}, {"text": "📋 History"}],
+                [{"text": "📎 Upload File"}, {"text": "🧠 My Memory"}],
+                [{"text": "👤 Account"}, {"text": "❓ Help"}],
+            ],
+            "resize_keyboard": True,
+            "is_persistent":   True,
+        }
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
-                await client.post(
+                resp = await client.post(
                     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
                     json={
-                        "chat_id":    telegram_id,
-                        "text":       f"✅ <b>Logged in as {name}!</b>\n\nAll features are now available.",
-                        "parse_mode": "HTML",
+                        "chat_id":      telegram_id,
+                        "text": (
+                            f"✅ <b>Logged in as {name}!</b>"
+                            + (f"\n<code>{email}</code>" if email else "")
+                            + "\n\nYou're all set — all features are now available.\n"
+                            "Start chatting or pick an option below."
+                        ),
+                        "parse_mode":   "HTML",
+                        "reply_markup": main_menu_keyboard,
                     },
                 )
+                if resp.status_code != 200:
+                    log.warning("sendMessage returned %s: %s", resp.status_code, resp.text)
         except Exception as exc:
             log.warning("Could not send login confirmation message: %s", exc)
 

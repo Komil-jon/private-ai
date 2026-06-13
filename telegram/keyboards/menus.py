@@ -12,7 +12,10 @@ from telegram import (
     WebAppInfo,
 )
 
-from config import BACKEND_URL  # our config, no 'telegram.' prefix
+from config import BACKEND_URL, WEBHOOK_URL  # our config, no 'telegram.' prefix
+
+# Public HTTPS base — required for web_app buttons (Telegram rejects http://)
+_PUBLIC_URL = (WEBHOOK_URL or BACKEND_URL).rstrip("/")
 
 
 # ── Persistent reply keyboards ────────────────────────────────────────────────
@@ -55,12 +58,14 @@ def login_keyboard(login_url: str) -> InlineKeyboardMarkup:
     ]])
 
 
-def web_app_keyboard() -> InlineKeyboardMarkup:
-    """Open the full Obelius web UI inside Telegram."""
+def web_app_keyboard() -> InlineKeyboardMarkup | None:
+    """Open the full Obelius web UI inside Telegram. Requires HTTPS — omitted on localhost."""
+    if not _PUBLIC_URL.startswith("https://"):
+        return None
     return InlineKeyboardMarkup([[
         InlineKeyboardButton(
             "🌐 Open Obelius Web App",
-            web_app=WebAppInfo(url=BACKEND_URL),
+            web_app=WebAppInfo(url=_PUBLIC_URL),
         ),
     ]])
 
