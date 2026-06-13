@@ -1,0 +1,19 @@
+# Environment files — never commit secrets
+.env
+**/.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Data / uploads
+uploads/
+backend/qdrant_data/
+
+# OS
+.DS_Store
+.idea/
