@@ -380,7 +380,7 @@ async function openConversation(convId, clearScreen) {
     // Render all messages
     msgs.forEach(function (msg) {
       if (msg.role === 'user') {
-        $('<div class="message message-personal">' + escapeHtmlInline(msg.content) + '</div>')
+        $('<div class="message message-personal new">' + escapeHtmlInline(msg.content) + '</div>')
           .appendTo($('.messages-content'));
       } else {
         var bubble  = $('<div class="message new"></div>');
@@ -567,7 +567,7 @@ function updateScrollbar() {
   _scrollPending = true;
   requestAnimationFrame(function () {
     var el = document.querySelector('.messages');
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     _scrollPending = false;
   });
 }
@@ -584,7 +584,7 @@ function flushTokenBuffer() {
     appendTokenToBubble(_tokenBubble, _tokenBuf);
     _tokenBuf = '';
     var el = document.querySelector('.messages');
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }
   _tokenRafPending = false;
 }
@@ -630,10 +630,10 @@ function insertMessage() {
   setDate();
   $('.message-input').val(null);
 
-  // Defer scroll one frame so the new message is in the DOM before we measure
+  // Smooth scroll so the user sees their message animate into view
   requestAnimationFrame(function () {
     var el = document.querySelector('.messages');
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   });
 
   sendMessageToServer(msg);
@@ -833,12 +833,14 @@ function buildSourceChips(sources) {
       html +=
         '<a class="source-chip web-chip" href="' + escapeHtmlInline(src.url) + '" ' +
         'target="_blank" rel="noopener noreferrer" title="' + escapeHtmlInline(src.url) + '">' +
-        '<i class="fa-solid fa-globe"></i> ' + escapeHtmlInline(label) +
+        '<i class="fa-solid fa-globe"></i>' +
+        '<span class="chip-label">' + escapeHtmlInline(label) + '</span>' +
         '</a>';
     } else {
       html +=
         '<span class="source-chip" title="' + escapeHtmlInline(label + score) + '">' +
-        '<i class="fa-solid fa-bookmark"></i> ' + escapeHtmlInline(label) + score +
+        '<i class="fa-solid fa-bookmark"></i>' +
+        '<span class="chip-label">' + escapeHtmlInline(label) + score + '</span>' +
         '</span>';
     }
   });
@@ -982,6 +984,12 @@ document.addEventListener('click', function (e) {
     e.stopPropagation();
     uploadPanel.classList.toggle('collapsed');
     uploadToggleBtn.classList.toggle('active', !uploadPanel.classList.contains('collapsed'));
+    // After the panel finishes expanding or collapsing (350ms transition),
+    // scroll to bottom so the last message stays in view
+    setTimeout(function () {
+      var msgEl = document.querySelector('.messages');
+      if (msgEl) msgEl.scrollTo({ top: msgEl.scrollHeight, behavior: 'smooth' });
+    }, 370);
   });
 
   browseTrigger.addEventListener('click', function (e) { e.stopPropagation(); fileInput.click(); });
