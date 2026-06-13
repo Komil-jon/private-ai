@@ -41,17 +41,47 @@ _WEB_SIGNALS = [
     "weather", "temperature", "forecast",
     # prices / markets
     "price of", "stock price", "exchange rate", "bitcoin", "crypto",
+    # general knowledge / industry comparisons
+    "how do", "how does", "how can", "how should", "best practice",
+    "industry", "companies", "other companies", "in general", "typically",
+    "standard", "common approach", "example", "examples",
+]
+
+# Signals that indicate the query is about internal company content specifically.
+# When these appear and no doc context was found, we do NOT fall back to web —
+# the right answer is "not in the uploaded docs".
+_INTERNAL_SIGNALS = [
+    "our policy", "our procedure", "our company", "our team", "our department",
+    "company policy", "hr policy", "internal", "employee handbook",
+    "onboarding", "benefits", "leave policy", "vacation policy",
+    "who is responsible", "who owns", "who manages",
 ]
 
 
 def _needs_web_search(query: str, has_doc_context: bool) -> bool:
     """
-    Return True only when the query explicitly requests live/real-time info.
-    For the company knowledge base, internal documents are the primary source —
-    the AI should say "not in the docs" rather than silently falling back to the web.
+    Three-way logic for the company knowledge base:
+
+    1. Doc context found + no explicit web signal → docs are enough, skip web.
+    2. No doc context + query looks company-internal → say "not in docs", skip web.
+    3. No doc context + general/industry question, OR any explicit web signal → search.
     """
     q = query.lower()
-    return any(signal in q for signal in _WEB_SIGNALS)
+
+    # Explicit web signal always wins
+    if any(signal in q for signal in _WEB_SIGNALS):
+        return True
+
+    # Doc context found and no explicit signal — docs answer it
+    if has_doc_context:
+        return False
+
+    # No doc context: only skip web if the query is clearly company-internal
+    if any(signal in q for signal in _INTERNAL_SIGNALS):
+        return False
+
+    # No doc context, no internal signal → general knowledge question, use web
+    return True
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
