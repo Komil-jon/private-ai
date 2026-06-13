@@ -9,13 +9,14 @@ Each file is:
 Returns JSON: { message, files }
 """
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from typing import List, Optional
 import os
 
 from app.models.schemas import UploadResponse
 from app.services.parser import parse_file
 from app.services.document_store import store_document
+from app.services.graph_store import index_document_graph
 
 router = APIRouter()
 
@@ -25,6 +26,7 @@ MAX_FILE_SIZE_MB   = 20
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_files(
+    background_tasks: BackgroundTasks,
     session_id: str = Form(...),
     files: List[UploadFile] = File(...),
     conv_id: Optional[str] = Form(None),
@@ -66,6 +68,9 @@ async def upload_files(
             chunk_count = store_document(store_key, filename, pages)
             processed.append(filename)
             print(f"[upload] {filename} → {chunk_count} chunks (key={store_key})")
+
+            # Graph indexing runs in the background — does not delay the response
+            background_tasks.add_task(index_document_graph, store_key, filename, pages)
 
         except Exception as e:
             print(f"[upload] Error processing {filename}: {e}")

@@ -12,3 +12,4 @@ qdrant-client
 fastembed
 duckduckgo-search
 python-telegram-bot[webhooks]==21.6
+neo4j

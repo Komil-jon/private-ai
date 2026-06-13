@@ -18,6 +18,7 @@ from app.services.auth_dep import optional_user, UserContext
 from app.services.mongo import conversations, messages
 from app.services.memory import get_user_profile, update_user_memory
 from app.services.document_store import retrieve_context, session_has_documents
+from app.services.graph_store import query_graph
 from app.services.llm_service import stream_reply, plan_search_queries
 from app.services import web_search as ws
 from app.models.schemas import ProcessRequest, Message
@@ -199,13 +200,33 @@ async def stream(
         )
         context_chunks = retrieve_context(doc_key, last_user)
 
+    # ── Graph context (Neo4j) ─────────────────────────────────────────────────
+    # Runs alongside Qdrant — adds entity relationship context to the prompt.
+    last_user_msg = next(
+        (m.content for m in reversed(conversation) if m.role == "user"), ""
+    )
+    _graph_loop = asyncio.get_running_loop()
+    graph_text = await _graph_loop.run_in_executor(
+        None, lambda: query_graph(doc_key, last_user_msg)
+    )
+
+    if graph_text:
+        context_chunks.append({
+            "filename": "Knowledge Graph",
+            "page":     None,
+            "chunk":    None,
+            "text":     graph_text,
+            "score":    1.0,
+        })
+        log.info("Graph context added (%d chars) for key=%s", len(graph_text), doc_key)
+
     doc_sources = [
         {
             "type":  "doc",
             "title": c["filename"],
             "page":  c.get("page"),
             "chunk": c.get("chunk"),
-            "score": c.get("score"),   # semantic similarity — proof Qdrant is active
+            "score": c.get("score"),
         }
         for c in context_chunks
     ]

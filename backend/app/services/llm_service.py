@@ -171,10 +171,17 @@ never explicitly say "I have a memory of you" or list facts robotically.
             "NEVER say 'give me a moment', 'let me check', or 'I'll search for that' — everything is already here. Answer now."
         )
     elif has_docs:
+        has_graph = any(c.get("filename") == "Knowledge Graph" for c in (context_chunks or []))
         capability_block = (
             "You have the user's uploaded documents (excerpts in DOCUMENT CONTEXT below). "
             "Reference the source filename when quoting from them."
         )
+        if has_graph:
+            capability_block += (
+                " A Knowledge Graph section is also included showing entity relationships "
+                "extracted from the documents (e.g. reporting lines, ownership, dependencies). "
+                "Use it to answer structural questions that pure text search may miss."
+            )
     elif has_web:
         capability_block = (
             "IMPORTANT — Live web results with actual page content are in this prompt.\n"

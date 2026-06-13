@@ -233,7 +233,7 @@ def session_has_documents(session_id: str) -> bool:
 
 
 def clear_session(session_id: str) -> None:
-    """Remove all stored vectors for a session."""
+    """Remove all stored vectors and graph nodes for a session."""
     client = _get_client()
     client.delete(
         collection_name=COLLECTION,
@@ -244,6 +244,10 @@ def clear_session(session_id: str) -> None:
         ),
     )
     log.info("Cleared Qdrant vectors for session=%s.", session_id)
+
+    # Keep Qdrant and Neo4j in sync
+    from app.services.graph_store import clear_session_graph
+    clear_session_graph(session_id)
 
 
 def list_files(session_id: str) -> List[str]:
