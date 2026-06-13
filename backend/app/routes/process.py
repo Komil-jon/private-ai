@@ -45,12 +45,10 @@ _WEB_SIGNALS = [
 
 def _needs_web_search(query: str, has_doc_context: bool) -> bool:
     """
-    Return True when the query should be enriched with live web results.
-    - Always True when no document context was found for this query.
-    - True even with docs when the query clearly needs real-time info.
+    Return True only when the query explicitly requests live/real-time info.
+    For the company knowledge base, internal documents are the primary source —
+    the AI should say "not in the docs" rather than silently falling back to the web.
     """
-    if not has_doc_context:
-        return True
     q = query.lower()
     return any(signal in q for signal in _WEB_SIGNALS)
 

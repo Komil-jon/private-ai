@@ -1,18 +1,15 @@
 """
-document_store.py — Qdrant-backed semantic document store
-=========================================================
-Replaces the old keyword-overlap store with proper vector search.
-
+document_store.py — Qdrant Cloud-backed semantic document store
+================================================================
 How it works:
   Upload:   text chunks → fastembed (local ONNX model) → 384-dim vectors
-            → stored in Qdrant local file DB, tagged with session_id
+            → stored in Qdrant Cloud, tagged with session_id
 
   Retrieve: query text → embed → Qdrant cosine nearest-neighbour search
             filtered by session_id → top-k semantically relevant chunks
 
-The same public API is preserved so no other file needs changing.
-
-Storage:   ./qdrant_data/  (local file, persists across restarts)
+Storage:   Qdrant Cloud free tier (QDRANT_URL + QDRANT_API_KEY env vars)
+           Falls back to local ./qdrant_data/ if env vars are not set.
 Model:     BAAI/bge-small-en-v1.5  (~130 MB, downloads once on first use)
 """
 
@@ -38,7 +35,7 @@ from fastembed import TextEmbedding
 log = logging.getLogger("obelius.docstore")
 
 # ── Tuneable constants ───────────────────────────────────────────────────────
-COLLECTION    = "obelius_docs"
+COLLECTION    = "company_docs"
 CHUNK_SIZE    = 400          # characters per chunk
 CHUNK_OVERLAP = 80           # overlap between consecutive chunks
 TOP_K           = 5            # chunks returned per query
@@ -67,11 +64,21 @@ def init_docstore() -> None:
 def _get_client() -> QdrantClient:
     global _client
     if _client is None:
-        data_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "qdrant_data")
-        )
-        os.makedirs(data_dir, exist_ok=True)
-        _client = QdrantClient(path=data_dir)
+        qdrant_url = os.getenv("QDRANT_URL", "").strip()
+        qdrant_api_key = os.getenv("QDRANT_API_KEY", "").strip()
+
+        if qdrant_url and qdrant_api_key:
+            log.info("Connecting to Qdrant Cloud at %s", qdrant_url)
+            _client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        else:
+            # Fallback: local file storage for development
+            data_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "qdrant_data")
+            )
+            os.makedirs(data_dir, exist_ok=True)
+            log.warning("QDRANT_URL/QDRANT_API_KEY not set — falling back to local storage at %s", data_dir)
+            _client = QdrantClient(path=data_dir)
+
         _ensure_collection(_client)
     return _client
 
@@ -93,6 +100,16 @@ def _ensure_collection(client: QdrantClient) -> None:
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
         log.info("Created Qdrant collection '%s'.", COLLECTION)
+
+    # Qdrant Cloud requires a payload index on any field used in filters.
+    # create_payload_index is idempotent — safe to call on every startup.
+    from qdrant_client.models import PayloadSchemaType
+    client.create_payload_index(
+        collection_name=COLLECTION,
+        field_name="session_id",
+        field_schema=PayloadSchemaType.KEYWORD,
+    )
+    log.info("Payload index ensured for 'session_id' in '%s'.", COLLECTION)
 
 
 # ── Embedding helper ─────────────────────────────────────────────────────────

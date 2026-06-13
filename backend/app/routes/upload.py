@@ -3,28 +3,21 @@ upload.py  —  POST /upload
 --------------------------
 Accepts multipart file uploads from the frontend.
 Each file is:
-  1. Saved to disk under uploads/<session_id>/
-  2. Parsed into (page, text) pairs
-  3. Chunked and stored in the in-memory document store
+  1. Parsed into (page, text) pairs from in-memory bytes
+  2. Chunked and stored in Qdrant Cloud (no local disk write needed)
 
 Returns JSON: { message, files }
 """
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
 from typing import List, Optional
 import os
-import shutil
 
 from app.models.schemas import UploadResponse
 from app.services.parser import parse_file
 from app.services.document_store import store_document
 
 router = APIRouter()
-
-# Upload root is two levels up from this file (project root / uploads)
-_HERE = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_ROOT = os.path.join(_HERE, "..", "..", "..", "uploads")
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv"}
 MAX_FILE_SIZE_MB   = 20
@@ -43,10 +36,6 @@ async def upload_files(
     # are scoped to a specific conversation rather than the whole browser session.
     store_key = conv_id if conv_id else session_id
 
-    # Per-session upload directory
-    session_dir = os.path.join(UPLOAD_ROOT, session_id)
-    os.makedirs(session_dir, exist_ok=True)
-
     processed = []
     errors    = []
 
@@ -59,7 +48,7 @@ async def upload_files(
             errors.append(f"{filename}: unsupported type")
             continue
 
-        # Read content
+        # Read content into memory
         content = await upload.read()
 
         # Size guard
@@ -67,12 +56,7 @@ async def upload_files(
             errors.append(f"{filename}: exceeds {MAX_FILE_SIZE_MB} MB limit")
             continue
 
-        # Save to disk
-        dest_path = os.path.join(session_dir, filename)
-        with open(dest_path, "wb") as f:
-            f.write(content)
-
-        # Parse → chunk → store
+        # Parse → chunk → store in Qdrant Cloud (no disk write)
         try:
             pages = parse_file(filename, content)
             if not pages:
