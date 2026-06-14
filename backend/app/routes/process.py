@@ -27,66 +27,93 @@ log = logging.getLogger("obelius.process")
 
 router = APIRouter()
 
-# Signals that indicate the user wants/needs live information
-_WEB_SIGNALS = [
-    # explicit requests
+# Signals that ALWAYS require live web data — fire even when doc context exists.
+# These cover things no internal document can answer: live weather, prices, news, time.
+_STRONG_WEB_SIGNALS = [
+    # explicit user requests
     "search", "look up", "find online", "browse", "google",
-    # time-awareness
-    "what time", "what date", "what day", "today", "right now", "currently",
-    "current time", "current date", "this year", "this month", "this week",
-    # recency / news
-    "latest", "recent", "news", "just happened", "just released",
-    "new version", "update", "announced", "breaking",
-    # weather
+    # time / date awareness (internal docs can't answer these)
+    # Note: bare "today" and "right now" are intentionally excluded — too ambiguous
+    # ("I joined today", "I need this right now" must not trigger web).
+    # Specific time-query patterns are used instead.
+    "what time is it", "what time now", "what date is", "what day is",
+    "today's date", "date today", "current time", "current date",
+    "what is today", "what's today", "what is the date", "what is the time",
+    "todays date", "today's date", "what date today",
+    "this year", "this month", "this week",
+    # news / recency
+    "latest", "recent news", "breaking", "just happened", "just released",
+    "just announced", "new release",
+    # live data
     "weather", "temperature", "forecast",
-    # prices / markets
     "price of", "stock price", "exchange rate", "bitcoin", "crypto",
-    # general knowledge / industry comparisons
-    "how do", "how does", "how can", "how should", "best practice",
-    "industry", "companies", "other companies", "in general", "typically",
-    "standard", "common approach", "example", "examples",
 ]
 
-# Signals that indicate the query is about internal company content specifically.
-# When these appear and no doc context was found, we do NOT fall back to web —
-# the right answer is "not in the uploaded docs".
+# Signals that suggest a general knowledge question — only trigger web when
+# NO doc context was found. If docs answered it, these are irrelevant.
+_SOFT_WEB_SIGNALS = [
+    "best practice", "industry standard", "in general", "typically",
+    "other companies", "common approach", "how does it work",
+    "what is a", "what is an", "explain what",
+    # Temporal words that sometimes need live data but are too ambiguous for strong signals
+    "today", "right now", "at the moment", "currently",
+]
+
+# Signals that mark a query as company-internal — even with no doc context,
+# do NOT fall back to web. The right answer is "not in our documents."
 _INTERNAL_SIGNALS = [
-    # direct file/document references — user is clearly asking about uploaded content
-    "the file", "this file", "the document", "this document", "the pdf",
-    "the docx", "the uploaded", "uploaded file", "uploaded document",
-    "describe the", "summarise the", "summarize the", "what does the",
-    "what is in", "tell me about the", "explain the",
-    # company-internal topic signals
+    # explicit document/file references
+    "the file", "this file", "the document", "this document",
+    "the pdf", "the docx", "the uploaded", "uploaded file",
+    "describe the", "summarise the", "summarize the",
+    "what is in", "tell me about the",
+    # HR / people / org
     "our policy", "our procedure", "our company", "our team", "our department",
-    "company policy", "hr policy", "internal", "employee handbook",
-    "onboarding", "benefits", "leave policy", "vacation policy",
+    "company policy", "hr policy", "employee handbook",
+    "onboarding", "leave policy", "vacation policy", "sick leave",
+    "parental leave", "annual leave", "performance review",
     "who is responsible", "who owns", "who manages",
+    "salary", "payroll", "wages", "pay slip", "payslip",
+    "ceo", "cto", "cfo", "coo", "vp of", "head of",
+    "phone number", "email address", "contact details",
+    "our budget", "company revenue", "our revenue", "internal",
+    "office access", "key card", "expense", "reimbursement",
+    "password policy", "vpn", "approved software", "it policy",
 ]
 
 
 def _needs_web_search(query: str, has_doc_context: bool) -> bool:
     """
-    Three-way logic for the company knowledge base:
+    Three-tier decision for a company knowledge base:
 
-    1. Doc context found + no explicit web signal → docs are enough, skip web.
-    2. No doc context + query looks company-internal → say "not in docs", skip web.
-    3. No doc context + general/industry question, OR any explicit web signal → search.
+    Tier 1 — STRONG web signals: always search (live data no doc can provide).
+    Tier 2 — Doc context found: trust the docs, skip web.
+              Exception: only override with soft signals when context is weak.
+    Tier 3 — No doc context:
+              • Clearly internal topic  → say "not in docs", no web.
+              • Soft/general knowledge  → search web.
+              • Unknown / ambiguous     → search web (safe default).
     """
     q = query.lower()
 
-    # Explicit web signal always wins
-    if any(signal in q for signal in _WEB_SIGNALS):
+    # Tier 1: live-data signals always win — no document can answer these
+    if any(signal in q for signal in _STRONG_WEB_SIGNALS):
         return True
 
-    # Doc context found and no explicit signal — docs answer it
+    # Tier 2: docs found — trust them, skip web
     if has_doc_context:
         return False
 
-    # No doc context: only skip web if the query is clearly company-internal
+    # Tier 3: no doc context found
+    # Don't go to web for questions that are clearly about internal company content
     if any(signal in q for signal in _INTERNAL_SIGNALS):
         return False
 
-    # No doc context, no internal signal → general knowledge question, use web
+    # Soft general-knowledge signals with no doc context → web
+    if any(signal in q for signal in _SOFT_WEB_SIGNALS):
+        return True
+
+    # Unknown query with no doc context → search web as safe fallback
     return True
 
 
@@ -218,11 +245,21 @@ async def stream(
 
     else:
         # ── Guest path: use client-sent conversation array ────────────────────
+        # Build conversation from the client-sent data array.
+        # Falls back to raw body["data"] if ProcessRequest validation fails
+        # (e.g. missing optional fields like "type").
         try:
             req = ProcessRequest(**body)
             conversation = req.data
         except Exception:
-            conversation = []
+            raw_data = body.get("data", [])
+            try:
+                conversation = [Message(**m) for m in raw_data if isinstance(m, dict)]
+            except Exception:
+                conversation = []
+        # Always ensure the current user message is in the conversation
+        if raw_message and (not conversation or conversation[-1].content != raw_message):
+            conversation.append(Message(role="user", content=raw_message))
 
     # ── Document context ──────────────────────────────────────────────────────
     # Primary key is conv_id (scopes docs to this conversation).
