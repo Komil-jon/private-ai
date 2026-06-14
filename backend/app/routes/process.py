@@ -17,7 +17,8 @@ from fastapi.responses import StreamingResponse
 from app.services.auth_dep import optional_user, UserContext
 from app.services.mongo import conversations, messages
 from app.services.memory import get_user_profile, update_user_memory
-from app.services.document_store import retrieve_context_multi, session_has_documents, COMPANY_BASE_KEY
+from app.services.document_store import retrieve_context_multi, session_has_documents
+from app.services.companies import get_qdrant_key
 from app.services.graph_store import query_graph
 from app.services.llm_service import stream_reply, plan_search_queries, generate_title
 from app.services import web_search as ws
@@ -209,6 +210,9 @@ async def stream(
     # conv_id comes from frontend (set after first exchange, or on conversation switch)
     client_conv_id: Optional[str] = body.get("conv_id") or None
 
+    # company_id comes from frontend after the user picks their company
+    request_company_id: Optional[str] = body.get("company_id") or None
+
     # The raw user message text (used for auto-title and memory)
     raw_message: str = body.get("message", "").strip()
 
@@ -275,8 +279,15 @@ async def stream(
         (m.content for m in reversed(conversation) if m.role == "user"), ""
     )
 
-    # Always search company base knowledge + user's own uploaded docs (if any)
-    search_keys = [doc_key, COMPANY_BASE_KEY] if doc_key != COMPANY_BASE_KEY else [COMPANY_BASE_KEY]
+    # Logged-in: search the user's company base + their own conversation docs.
+    # The company key comes from the frontend after the user picks their company;
+    # falls back to COMPANY_BASE if not set.
+    # Guest: search only user's uploaded docs (no access to company knowledge base).
+    if user:
+        company_key = get_qdrant_key(request_company_id)
+        search_keys = [doc_key, company_key] if doc_key != company_key else [company_key]
+    else:
+        search_keys = [doc_key]
     context_chunks = retrieve_context_multi(search_keys, last_user_msg)
 
     # ── Graph context (Neo4j) ─────────────────────────────────────────────────
@@ -382,6 +393,7 @@ async def stream(
                 return list(stream_reply(
                     conversation, context_chunks, user_profile,
                     web_results, current_utc, web_attempted,
+                    is_guest=(user is None),
                 ))
 
             tokens = await loop.run_in_executor(None, _run_sync)

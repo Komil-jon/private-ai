@@ -11,12 +11,14 @@ from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
-from app.routes.process import router as process_router
-from app.routes.upload  import router as upload_router
-from app.routes.history import router as history_router
-from app.services.mongo import init_db, close_db
+from app.routes.process  import router as process_router
+from app.routes.upload   import router as upload_router
+from app.routes.history  import router as history_router
+from app.routes.company  import router as company_router
+from app.services.mongo  import init_db, close_db
 from app.services.document_store import init_docstore, ingest_company_docs
 from app.services.graph_store import init_graph
+from app.services.companies import COMPANIES
 
 BASE_DIR     = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -42,7 +44,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     loop = asyncio.get_event_loop()
     with concurrent.futures.ThreadPoolExecutor() as pool:
         await loop.run_in_executor(pool, init_docstore)
-        await loop.run_in_executor(pool, lambda: ingest_company_docs(DOCS_DIR))
+        # Ingest docs for every registered company (skips already-ingested files)
+        for _cid, _cinfo in COMPANIES.items():
+            _subdir = _cinfo["docs_subdir"]
+            _cdir   = os.path.join(DOCS_DIR, _subdir) if _subdir else DOCS_DIR
+            _ckey   = _cinfo["qdrant_key"]
+            await loop.run_in_executor(
+                pool, lambda d=_cdir, k=_ckey: ingest_company_docs(d, k)
+            )
     try:
         await loop.run_in_executor(None, init_graph)
     except Exception as exc:
@@ -106,6 +115,7 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 app.include_router(process_router)
 app.include_router(upload_router)
 app.include_router(history_router)
+app.include_router(company_router)
 
 # Telegram bot support routes (login redirect, auth callback, webhook)
 from app.telegram_router import router as telegram_router

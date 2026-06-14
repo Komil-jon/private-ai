@@ -91,6 +91,15 @@
           <!-- filled by JS -->
         </div>
 
+        <!-- Company indicator row (logged-in only) -->
+        <div id="company-row" class="company-row hidden-auth">
+          <i class="fa-solid fa-building"></i>
+          <span id="company-row-name">No company selected</span>
+          <button id="change-company-btn" class="change-company-btn" title="Switch company">
+            <i class="fa-solid fa-right-left"></i>
+          </button>
+        </div>
+
         <!-- Auth footer: always visible at bottom of drawer -->
         <div class="drawer-auth-footer">
           <!-- Guest state -->
@@ -157,6 +166,22 @@
       Obelius can make mistakes. Verify important information independently.
     </p>
 
+  </div>
+
+  <!-- Company Picker Modal -->
+  <div id="company-picker" class="company-picker-overlay hidden">
+    <div class="company-picker-modal">
+      <div class="company-picker-header">
+        <div class="company-picker-logo">
+          <img src="/static/images/icon.svg" alt="Obelius">
+        </div>
+        <h2>Select Your Company</h2>
+        <p>Choose the company you work for to access the right knowledge base.</p>
+      </div>
+      <div id="company-list-modal" class="company-list-modal">
+        <!-- filled by JS -->
+      </div>
+    </div>
   </div>
 
   <!-- Scripts -->

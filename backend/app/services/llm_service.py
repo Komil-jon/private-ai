@@ -137,6 +137,7 @@ def _build_prompt(
     web_context:      Optional[List[Dict[str, str]]] = None,
     current_time:     str = "",
     web_attempted:    bool = False,
+    is_guest:         bool = False,
 ) -> str:
     has_docs    = bool(context_chunks)
     has_web     = bool(web_context)
@@ -229,7 +230,22 @@ never explicitly say "I have a memory of you" or list facts robotically.
 
     time_line = f"- Current date and time: **{current_time}**\n" if current_time else ""
 
-    system_prompt = f"""You are the Company Knowledge Assistant — a private AI that helps employees find answers from internal company documents such as HR policies, technical manuals, SOPs, meeting notes, and internal guidelines.
+    if is_guest:
+        system_prompt = f"""You are a private AI assistant that answers questions based on documents the user has uploaded, or from general knowledge when no documents are available.
+
+Rules:
+- If documents are uploaded, ALWAYS answer from them first. Cite the filename (and page if known) when quoting.
+- If the answer is not in the uploaded documents but is a general knowledge question, answer from your training and say so.
+- If the answer requires specific information only found in documents the user hasn't uploaded yet, say: "I couldn't find this in your uploaded documents. Please upload the relevant file."
+- Never fabricate specific facts, figures, or policies not present in the documents.
+- Be helpful, clear, and concise. Use Markdown formatting for readability.
+- Do NOT answer harmful, illegal, or dangerous questions.
+- If a question is inappropriate, respond with exactly: PERSONAL
+- If content is unsafe, respond with exactly: IGNORED
+{time_line}{capability_block}
+{profile_block}{doc_block}{web_block}"""
+    else:
+        system_prompt = f"""You are the Company Knowledge Assistant — a private AI that helps employees find answers from internal company documents such as HR policies, technical manuals, SOPs, meeting notes, and internal guidelines.
 
 Rules:
 - ALWAYS answer from the uploaded company documents first. Cite the document name (and page if known) when quoting.
@@ -260,6 +276,7 @@ def stream_reply(
     web_context:    Optional[List[Dict[str, str]]] = None,
     current_time:   str = "",
     web_attempted:  bool = False,
+    is_guest:       bool = False,
 ) -> Generator[str, None, None]:
     """
     LLM call 2 of 2 in the agentic search pipeline.
@@ -267,7 +284,7 @@ def stream_reply(
     """
     prompt = _build_prompt(
         conversation, context_chunks, user_profile,
-        web_context, current_time, web_attempted,
+        web_context, current_time, web_attempted, is_guest,
     )
     for chunk in client.models.generate_content_stream(
         model="gemini-2.5-flash",

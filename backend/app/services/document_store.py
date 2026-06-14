@@ -246,7 +246,7 @@ def retrieve_context_multi(keys: List[str], query: str) -> List[Dict[str, Any]]:
             "chunk":    h.payload.get("chunk_idx"),
             "text":     h.payload["text"],
             "score":    round(h.score, 3),
-            "source":   "company" if h.payload.get("session_id") == COMPANY_BASE_KEY else "user",
+            "source":   "company" if (h.payload.get("session_id") or "").startswith("COMPANY_") else "user",
         }
         for h in response.points
     ]
@@ -281,11 +281,44 @@ def clear_session(session_id: str) -> None:
     clear_session_graph(session_id)
 
 
-def ingest_company_docs(docs_dir: str) -> None:
+def migrate_documents(from_key: str, to_key: str) -> int:
     """
-    Read all supported files from docs_dir and store them under COMPANY_BASE_KEY.
+    Re-tag all Qdrant chunks from from_key to to_key in-place.
+    Used when a guest session is claimed by a newly-logged-in user.
+    Returns the number of points updated (0 if nothing to migrate).
+    """
+    if not from_key or not to_key or from_key == to_key:
+        return 0
+
+    client = _get_client()
+
+    count_result = client.count(
+        collection_name=COLLECTION,
+        count_filter=Filter(
+            must=[FieldCondition(key="session_id", match=MatchValue(value=from_key))]
+        ),
+        exact=True,
+    )
+    n = count_result.count
+    if n == 0:
+        return 0
+
+    client.set_payload(
+        collection_name=COLLECTION,
+        payload={"session_id": to_key},
+        points=Filter(
+            must=[FieldCondition(key="session_id", match=MatchValue(value=from_key))]
+        ),
+    )
+    log.info("Migrated %d doc chunks: %s → %s", n, from_key, to_key)
+    return n
+
+
+def ingest_company_docs(docs_dir: str, qdrant_key: str = COMPANY_BASE_KEY) -> None:
+    """
+    Read all supported files from docs_dir and store them under qdrant_key.
     Skips filenames already present in Qdrant — safe to call on every startup.
-    To re-ingest a changed file, delete it from Qdrant first (clear_session(COMPANY_BASE_KEY)).
+    To re-ingest a changed file, delete it from Qdrant first (clear_session(qdrant_key)).
     """
     import os
     from app.services.parser import parse_file
@@ -294,15 +327,15 @@ def ingest_company_docs(docs_dir: str) -> None:
         log.warning("Company docs directory not found: %s — skipping ingestion.", docs_dir)
         return
 
-    already_ingested = set(list_files(COMPANY_BASE_KEY))
-    log.info("Company base: %d file(s) already in Qdrant.", len(already_ingested))
+    already_ingested = set(list_files(qdrant_key))
+    log.info("Company base [%s]: %d file(s) already in Qdrant.", qdrant_key, len(already_ingested))
 
     supported = {".pdf", ".docx", ".txt", ".csv"}
     for fname in sorted(os.listdir(docs_dir)):
         if os.path.splitext(fname)[-1].lower() not in supported:
             continue
         if fname in already_ingested:
-            log.info("Skipping already-ingested company doc: %s", fname)
+            log.info("Skipping already-ingested company doc [%s]: %s", qdrant_key, fname)
             continue
         fpath = os.path.join(docs_dir, fname)
         try:
@@ -312,8 +345,8 @@ def ingest_company_docs(docs_dir: str) -> None:
             if not pages:
                 log.warning("Could not extract text from company doc: %s", fname)
                 continue
-            count = store_document(COMPANY_BASE_KEY, fname, pages)
-            log.info("Ingested company doc: %s → %d chunks", fname, count)
+            count = store_document(qdrant_key, fname, pages)
+            log.info("Ingested company doc [%s]: %s → %d chunks", qdrant_key, fname, count)
         except Exception as exc:
             log.error("Failed to ingest company doc %s: %s", fname, exc)
 

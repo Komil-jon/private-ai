@@ -43,6 +43,7 @@ async def init_db() -> None:
     await _db["messages"].create_index("conv_id")
     await _db["messages"].create_index([("conv_id", 1), ("ts", 1)])
     await _db["user_memory"].create_index("user_id", unique=True)
+    await _db["user_settings"].create_index("user_id", unique=True)
 
     log.info("Obelius MongoDB connected.")
 
@@ -69,3 +70,7 @@ def messages() -> motor.motor_asyncio.AsyncIOMotorCollection:
 
 def user_memory() -> motor.motor_asyncio.AsyncIOMotorCollection:
     return _col("user_memory")
+
+
+def user_settings() -> motor.motor_asyncio.AsyncIOMotorCollection:
+    return _col("user_settings")

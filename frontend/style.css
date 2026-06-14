@@ -1560,3 +1560,192 @@ AI Disclaimer
     box-shadow: 0 1.5vh 4vh rgba(0, 0, 0, 0.6);
   }
 }
+/* ============================================================
+   COMPANY ROW (in drawer, logged-in only)
+   ============================================================ */
+.company-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5vh;
+  font-size: 0.75vh;
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: normal;
+  padding: 0.5vh 1vh;
+  border-top: 0.1vh solid rgba(255, 228, 181, 0.08);
+  flex-shrink: 0;
+}
+.company-row i {
+  font-size: 0.78vh;
+  color: rgba(255, 228, 181, 0.5);
+  flex-shrink: 0;
+}
+#company-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 228, 181, 0.75);
+}
+.change-company-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 228, 181, 0.3);
+  font-size: 0.7vh;
+  cursor: pointer;
+  padding: 0.1vh;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+.change-company-btn:hover { color: moccasin; }
+
+/* ============================================================
+   COMPANY PICKER MODAL
+   ============================================================ */
+.company-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: opacity 0.25s ease;
+}
+.company-picker-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+  display: none;
+}
+
+.company-picker-modal {
+  background: rgba(18, 18, 28, 0.97);
+  border: 1px solid rgba(167, 130, 71, 0.32);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.75);
+  padding: 28px 24px;
+  width: min(90vw, 400px);
+  max-height: 80vh;
+  overflow-y: auto;
+  color: white;
+  font-family: "Poppins", sans-serif;
+}
+.company-picker-modal::-webkit-scrollbar { display: none; }
+.company-picker-modal { scrollbar-width: none; }
+
+.company-picker-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.company-picker-logo {
+  width: 42px;
+  height: 42px;
+  margin: 0 auto 10px;
+}
+.company-picker-logo img { width: 100%; height: auto; }
+
+.company-picker-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: moccasin;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.company-picker-header p {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+  margin: 0;
+}
+
+.company-list-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.company-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.company-card:hover {
+  border-color: rgba(167, 130, 71, 0.38);
+  background: rgba(167, 130, 71, 0.07);
+}
+.company-card.suggested {
+  border-color: rgba(167, 130, 71, 0.42);
+  background: rgba(167, 130, 71, 0.09);
+}
+
+.company-card-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.company-card-icon {
+  width: 34px;
+  height: 34px;
+  background: rgba(167, 130, 71, 0.14);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: rgba(255, 228, 181, 0.6);
+  font-size: 13px;
+}
+.company-card-info { min-width: 0; }
+.company-card-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.company-card-domain {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+  margin-top: 1px;
+}
+.company-card-badge {
+  font-size: 9px;
+  background: rgba(167, 130, 71, 0.18);
+  color: moccasin;
+  border: 1px solid rgba(167, 130, 71, 0.35);
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.company-select-btn {
+  flex-shrink: 0;
+  background: rgba(167, 130, 71, 0.14);
+  border: 1px solid rgba(167, 130, 71, 0.38);
+  color: moccasin;
+  font-size: 10px;
+  font-family: "Poppins", sans-serif;
+  border-radius: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.company-select-btn:hover {
+  background: rgba(167, 130, 71, 0.28);
+  border-color: rgba(167, 130, 71, 0.65);
+}

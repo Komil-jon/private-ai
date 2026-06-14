@@ -22,16 +22,18 @@ DELETE /api/conversations/all
 
 from __future__ import annotations
 
-import uuid
+import asyncio
 from datetime import datetime, timezone
 from typing import List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.services.auth_dep import require_user, UserContext
 from app.services.mongo import conversations, messages
+from app.services.document_store import migrate_documents
+from app.services.llm_service import generate_title
 
 router = APIRouter(prefix="/api", tags=["history"])
 
@@ -56,6 +58,11 @@ class MessageOut(BaseModel):
 
 class NewConvBody(BaseModel):
     title: Optional[str] = None
+
+
+class MigrateSessionBody(BaseModel):
+    messages:         List[dict]  # [{role, content}, ...]
+    guest_session_id: str         # localStorage session id from the guest
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -175,3 +182,66 @@ async def get_messages(
             ts=_ts(msg.get("ts")),
         ))
     return result
+
+
+@router.post("/migrate-session")
+async def migrate_session(
+    body: MigrateSessionBody,
+    user: UserContext = Depends(require_user),
+):
+    """
+    Called right after a guest logs in.
+    Creates a new conversation, imports the guest messages, and re-tags any
+    Qdrant document chunks from guest_session_id to the new conv_id.
+    Returns { conv_id } so the frontend can open the migrated conversation.
+    """
+    if not body.messages:
+        raise HTTPException(400, "No messages to migrate.")
+
+    now = datetime.now(timezone.utc)
+
+    # Create the conversation
+    result = await conversations().insert_one({
+        "user_id":    user.user_id,
+        "title":      "New conversation",
+        "created_at": now,
+        "updated_at": now,
+    })
+    conv_id = str(result.inserted_id)
+
+    # Import messages preserving order
+    for msg in body.messages:
+        role    = msg.get("role", "user")
+        content = msg.get("content", "").strip()
+        if not content:
+            continue
+        await messages().insert_one({
+            "conv_id": conv_id,
+            "user_id": user.user_id,
+            "role":    role,
+            "content": content,
+            "sources": [],
+            "ts":      now,
+        })
+
+    # Auto-title from the first user message
+    first_user_msg = next(
+        (m.get("content", "") for m in body.messages if m.get("role") == "user"), ""
+    )
+    if first_user_msg:
+        async def _set_title():
+            try:
+                title = await asyncio.to_thread(generate_title, first_user_msg)
+                await conversations().update_one(
+                    {"_id": result.inserted_id},
+                    {"$set": {"title": title}},
+                )
+            except Exception:
+                pass
+        asyncio.create_task(_set_title())
+
+    # Migrate any uploaded documents from the guest session to this conversation
+    if body.guest_session_id:
+        await asyncio.to_thread(migrate_documents, body.guest_session_id, conv_id)
+
+    return {"conv_id": conv_id}

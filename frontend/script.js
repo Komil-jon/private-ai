@@ -23,6 +23,7 @@ marked.use({
 ======================= */
 var currentUser      = null;
 var currentToken     = null;
+var currentCompany   = null;   // { id, name, domain } — set after company picker
 var activeConvId     = null;
 var conversationList = [];   // in-memory cache of loaded conversations
 var _streamGeneration = 0;   // incremented on every user-initiated conv switch; guards stale streams
@@ -112,6 +113,8 @@ async function checkAuth() {
             currentToken = null;
             currentUser  = parsedUser;
             renderAuthState(currentUser);
+            await migrateGuestSessionIfNeeded();
+            await ensureCompanySelected();
             await loadConversations();
             var lastConv = localStorage.getItem('obelius_last_conv');
             if (lastConv) {
@@ -163,12 +166,18 @@ async function checkAuth() {
     currentUser  = data.user;
     renderAuthState(currentUser);
 
+    // Migrate any guest conversation that existed before login
+    await migrateGuestSessionIfNeeded();
+
+    // Ensure user has selected a company (shows picker modal if not)
+    await ensureCompanySelected();
+
     // Load conversation list for the drawer
     await loadConversations();
 
     var lastConv = localStorage.getItem('obelius_last_conv');
     if (lastConv) {
-      // Try to restore the last conversation
+      // Try to restore the last conversation (may be the just-migrated one)
       var restored = await openConversation(lastConv, true);
       if (!restored) {
         // That conversation no longer exists — start fresh
@@ -187,6 +196,143 @@ async function checkAuth() {
     firstMessage();
   }
 }
+
+/* =======================
+   GUEST SESSION MIGRATION
+   Called right after login. If the user was chatting as a guest,
+   sends those messages to the backend which creates a new conversation
+   and transfers any uploaded documents.
+======================= */
+async function migrateGuestSessionIfNeeded() {
+  var savedConv      = localStorage.getItem('obelius_guest_conv');
+  var savedSessionId = localStorage.getItem('obelius_guest_session_id');
+
+  // Always clean up regardless of outcome
+  localStorage.removeItem('obelius_guest_conv');
+  localStorage.removeItem('obelius_guest_session_id');
+
+  if (!savedConv || !savedSessionId) return;
+
+  var guestMessages;
+  try { guestMessages = JSON.parse(savedConv); } catch (e) { return; }
+  if (!guestMessages || !guestMessages.length) return;
+  if (!guestMessages.some(function (m) { return m.role === 'user'; })) return;
+
+  try {
+    var resp = await authFetch('/api/migrate-session', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ messages: guestMessages, guest_session_id: savedSessionId }),
+    });
+    if (resp.ok) {
+      var migData = await resp.json();
+      // Point obelius_last_conv at the migrated conversation so checkAuth opens it
+      localStorage.setItem('obelius_last_conv', migData.conv_id);
+    }
+  } catch (e) {
+    console.warn('[migrate] guest session migration failed:', e);
+  }
+}
+
+/* =======================
+   COMPANY PICKER
+   Shows a modal after login so the user can pick their company.
+   The selection is persisted in MongoDB and cached in currentCompany.
+======================= */
+async function ensureCompanySelected() {
+  if (!currentUser) return;
+
+  try {
+    var resp = await authFetch('/api/user/company');
+    if (resp.ok) {
+      var data = await resp.json();
+      if (data.company_id) {
+        currentCompany = { id: data.company_id, name: data.name, domain: data.domain };
+        renderCompanyRow(currentCompany);
+        return;
+      }
+    }
+  } catch (e) {}
+
+  // No company saved on server — show picker
+  showCompanyPicker();
+}
+
+async function showCompanyPicker() {
+  var companies = [];
+  try {
+    var resp = await fetch('/api/companies');
+    if (resp.ok) companies = await resp.json();
+  } catch (e) {}
+
+  var list = document.getElementById('company-list-modal');
+  if (!list) return;
+  list.innerHTML = '';
+
+  var userEmail   = currentUser ? (currentUser.email || '') : '';
+  var emailDomain = userEmail.split('@')[1] || '';
+
+  companies.forEach(function (company) {
+    var isMatch = emailDomain && emailDomain.toLowerCase() === company.domain.toLowerCase();
+
+    var card = document.createElement('div');
+    card.className = 'company-card' + (isMatch ? ' suggested' : '');
+
+    card.innerHTML =
+      '<div class="company-card-left">' +
+        '<div class="company-card-icon"><i class="fa-solid fa-building"></i></div>' +
+        '<div class="company-card-info">' +
+          '<div class="company-card-name">' + escapeHtmlInline(company.name) + '</div>' +
+          '<div class="company-card-domain">@' + escapeHtmlInline(company.domain) + '</div>' +
+        '</div>' +
+        (isMatch ? '<span class="company-card-badge">Suggested</span>' : '') +
+      '</div>' +
+      '<button class="company-select-btn">Select <i class="fa-solid fa-arrow-right"></i></button>';
+
+    card.querySelector('.company-select-btn').addEventListener('click', function () {
+      selectCompany(company);
+    });
+
+    list.appendChild(card);
+  });
+
+  var overlay = document.getElementById('company-picker');
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+async function selectCompany(company) {
+  try {
+    await authFetch('/api/user/company', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ company_id: company.id }),
+    });
+  } catch (e) {}
+
+  currentCompany = { id: company.id, name: company.name, domain: company.domain };
+  localStorage.setItem('obelius_company_id', company.id);
+
+  var overlay = document.getElementById('company-picker');
+  if (overlay) overlay.classList.add('hidden');
+
+  renderCompanyRow(currentCompany);
+}
+
+function renderCompanyRow(company) {
+  var row    = document.getElementById('company-row');
+  var nameEl = document.getElementById('company-row-name');
+  if (company) {
+    if (row)    row.classList.remove('hidden-auth');
+    if (nameEl) nameEl.textContent = company.name;
+  } else {
+    if (row) row.classList.add('hidden-auth');
+  }
+}
+
+document.getElementById('change-company-btn').addEventListener('click', function (e) {
+  e.stopPropagation();
+  showCompanyPicker();
+});
 
 async function startFreshConversation() {
   _streamGeneration++;
@@ -272,9 +418,17 @@ function renderAuthState(user) {
 ======================= */
 document.getElementById('drawer-login-btn').addEventListener('click', function (e) {
   e.preventDefault();
+  // Save the current guest conversation so it can be migrated after login
+  var guestConv = collectVisibleMessages();
+  var hasUserMsg = guestConv.some(function (m) { return m.role === 'user'; });
+  if (hasUserMsg) {
+    localStorage.setItem('obelius_guest_conv', JSON.stringify(guestConv));
+    localStorage.setItem('obelius_guest_session_id', id);
+  } else {
+    localStorage.removeItem('obelius_guest_conv');
+    localStorage.removeItem('obelius_guest_session_id');
+  }
   var redirect = encodeURIComponent(window.location.href);
-  // prompt=login tells the auth server to always show the login form,
-  // even if a valid session already exists there (standard OAuth2 pattern).
   window.location.href = AUTH_BASE + '?redirect=' + redirect + '&prompt=login';
 });
 
@@ -282,11 +436,16 @@ document.getElementById('drawer-logout-btn').addEventListener('click', function 
   localStorage.removeItem('eternal_token');
   localStorage.removeItem('eternal_user');
   localStorage.removeItem('obelius_last_conv');
+  localStorage.removeItem('obelius_company_id');
   currentToken     = null;
   currentUser      = null;
+  currentCompany   = null;
   activeConvId     = null;
   conversationList = [];
   renderAuthState(null);
+  renderCompanyRow(null);
+  var overlay = document.getElementById('company-picker');
+  if (overlay) overlay.classList.add('hidden');
   clearChat();
   firstMessage();
 });
@@ -675,6 +834,9 @@ function sendMessageToServer(message) {
   // Always include conv_id if we have one — backend uses it to find/create the conversation
   if (activeConvId) body.conv_id = activeConvId;
 
+  // Send company_id so the backend queries the right knowledge base
+  if (currentCompany) body.company_id = currentCompany.id;
+
   fetch('/stream', { method: 'POST', headers: headers, body: JSON.stringify(body), credentials: 'include' })
   .then(function (res) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -889,7 +1051,7 @@ function firstMessage() {
   hideLoadingMessage();
   var greeting = currentUser
     ? 'Hello, ' + (currentUser.full_name || currentUser.username) + '! How can I help you today?'
-    : 'Hello! How can I help you today?';
+    : 'Hello! Upload your documents and I\'ll answer questions based on them — or just ask me anything.';
 
   $('<div class="message new">' +
     '<figure class="avatar"><img src="/static/images/icon.svg" /></figure>' +
