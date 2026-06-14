@@ -25,6 +25,7 @@ var currentUser      = null;
 var currentToken     = null;
 var activeConvId     = null;
 var conversationList = [];   // in-memory cache of loaded conversations
+var _streamGeneration = 0;   // incremented on every user-initiated conv switch; guards stale streams
 
 // Guest session id — used as document-store key for uploads
 var id = getOrCreateSessionId();
@@ -188,6 +189,7 @@ async function checkAuth() {
 }
 
 async function startFreshConversation() {
+  _streamGeneration++;
   if (!currentUser) return;
 
   // Reuse the first untitled conversation if one already exists —
@@ -349,6 +351,7 @@ function renderConversationList(convs) {
    Returns true if conversation was found and loaded, false if not found.
 ======================= */
 async function openConversation(convId, clearScreen) {
+  _streamGeneration++;
   if (!currentUser) return false;
 
   try {
@@ -420,6 +423,7 @@ async function openConversation(convId, clearScreen) {
    CONVERSATIONS — new
 ======================= */
 async function newConversation() {
+  _streamGeneration++;
   if (!currentUser) return;
 
   // If the current conversation has no user messages yet, there is nothing
@@ -649,6 +653,7 @@ $(window).on('keydown', function (e) {
    SERVER COMMUNICATION (streaming SSE)
 ======================= */
 function sendMessageToServer(message) {
+  var gen = _streamGeneration;  // snapshot: if user switches conv, gen will diverge
   showLoadingMessage();
 
   var conversation = collectVisibleMessages();
@@ -675,6 +680,12 @@ function sendMessageToServer(message) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     hideLoadingMessage();
 
+    // User navigated away before response headers arrived — discard silently
+    if (_streamGeneration !== gen) {
+      res.body.getReader().cancel();
+      return;
+    }
+
     var bubble      = createStreamingBubble();
     var reader      = res.body.getReader();
     var decoder     = new TextDecoder();
@@ -689,12 +700,28 @@ function sendMessageToServer(message) {
         var frames = buffer.split('\n\n');
         buffer = frames.pop();
 
+        var stale = _streamGeneration !== gen;
+
         frames.forEach(function (frame) {
           var line = frame.trim();
           if (!line.startsWith('data:')) return;
           var jsonStr = line.slice(5).trim();
           var evt;
           try { evt = JSON.parse(jsonStr); } catch (e) { return; }
+
+          if (evt.type === 'done') {
+            // Always process done: refresh list for title update; only update activeConvId if not stale
+            if (evt.conv_id && evt.conv_id !== id) {
+              if (!stale) {
+                activeConvId = evt.conv_id;
+                localStorage.setItem('obelius_last_conv', activeConvId);
+              }
+              if (currentUser) setTimeout(loadConversations, 400);
+            }
+            return;
+          }
+
+          if (stale) return;  // skip all UI mutations for other event types
 
           if (evt.type === 'search_info') {
             if (evt.triggered) {
@@ -736,19 +763,6 @@ function sendMessageToServer(message) {
             updateScrollbar();
           }
 
-          else if (evt.type === 'done') {
-            // Backend tells us which conv_id was used/created
-            if (evt.conv_id && evt.conv_id !== id) {
-              var wasNew = !activeConvId || activeConvId !== evt.conv_id;
-              activeConvId = evt.conv_id;
-              localStorage.setItem('obelius_last_conv', activeConvId);
-              // Refresh drawer list (title may have been auto-set)
-              if (currentUser) {
-                setTimeout(loadConversations, 400);
-              }
-            }
-          }
-
           else if (evt.type === 'error') {
             finaliseStreamingBubble(bubble, evt.text || 'Something went wrong.', []);
             setDate();
@@ -756,11 +770,16 @@ function sendMessageToServer(message) {
           }
         });
 
+        // Stop reading further chunks if we're stale
+        if (stale) { reader.cancel(); return; }
+
         read();
       }).catch(function (err) {
         console.error('[stream] read error', err);
-        finaliseStreamingBubble(bubble, accumulated || 'Connection lost.', []);
-        updateScrollbar();
+        if (_streamGeneration === gen) {
+          finaliseStreamingBubble(bubble, accumulated || 'Connection lost.', []);
+          updateScrollbar();
+        }
       });
     }
     read();
@@ -917,14 +936,30 @@ function collectVisibleMessages() {
 ======================= */
 var loadStart = performance.now();
 window.addEventListener('load', function () {
-  var loader    = document.getElementById('loader');
-  var content   = document.getElementById('content');
-  var elapsed   = performance.now() - loadStart;
-  var remaining = Math.max(500 - elapsed, 0);
+  var loader  = document.getElementById('loader');
+  var content = document.getElementById('content');
+  var elapsed = performance.now() - loadStart;
+  // Min 650ms so the planet animation gets a moment to breathe
   setTimeout(function () {
-    loader.classList.add('hidden');
+    // 1. Fade loader out (0.9s CSS transition)
+    loader.classList.add('fading');
+
+    // 2. Unhide the content layer (still opacity:0 underneath)
     if (content) content.classList.remove('hidden');
-  }, remaining);
+
+    // 3. ~80ms into the loader fade, start fading the card + disclaimer in (0.75s)
+    setTimeout(function () {
+      var chat = document.querySelector('.chat');
+      var disc = document.querySelector('.ai-disclaimer');
+      if (chat) chat.classList.add('visible');
+      if (disc) disc.classList.add('visible');
+    }, 80);
+
+    // 4. After transition completes, pull loader from paint tree
+    setTimeout(function () {
+      loader.classList.add('gone');
+    }, 1000);
+  }, Math.max(650 - elapsed, 0));
 });
 
 /* =======================
@@ -1174,5 +1209,67 @@ function escapeHtmlInline(str) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;')
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+/* =======================
+   STAR BACKGROUND
+======================= */
+(function initStars() {
+  var canvas = document.getElementById('star-canvas');
+  if (!canvas || typeof THREE === 'undefined') return;
+
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  var scene  = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 1000);
+  camera.position.z = 1;
+  camera.rotation.x = Math.PI / 2;
+
+  /* Hard filled circle — uniform brightness, no radial fade */
+  var sc = document.createElement('canvas');
+  sc.width = sc.height = 32;
+  var ctx = sc.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(16, 16, 16, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  var tex = new THREE.Texture(sc);
+  tex.needsUpdate = true;
+
+  var COUNT     = 6000;
+  var positions = new Float32Array(COUNT * 3);
+  for (var i = 0; i < COUNT; i++) {
+    positions[i * 3]     = (Math.random() - 0.5) * 600;
+    positions[i * 3 + 1] = (Math.random() - 0.5) * 600;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 600;
+  }
+  var geo = new THREE.BufferGeometry();
+  geo.addAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  var mat = new THREE.PointsMaterial({
+    map:             tex,
+    size:            1.1,
+    transparent:     true,
+    opacity:         0.78,
+    depthWrite:      false,
+    sizeAttenuation: true,
+  });
+
+  var stars = new THREE.Points(geo, mat);
+  scene.add(stars);
+
+  window.addEventListener('resize', function () {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  });
+
+  (function animate() {
+    requestAnimationFrame(animate);
+    stars.rotation.y += 0.0002;
+    renderer.render(scene, camera);
+  })();
+})();
 
 window.saveToHistory = function () {};

@@ -19,7 +19,7 @@ from app.services.mongo import conversations, messages
 from app.services.memory import get_user_profile, update_user_memory
 from app.services.document_store import retrieve_context, session_has_documents
 from app.services.graph_store import query_graph
-from app.services.llm_service import stream_reply, plan_search_queries
+from app.services.llm_service import stream_reply, plan_search_queries, generate_title
 from app.services import web_search as ws
 from app.models.schemas import ProcessRequest, Message
 
@@ -122,11 +122,9 @@ async def _ensure_conversation(user_id: str, conv_id: Optional[str]) -> str:
 
 
 async def _auto_title(conv_id: str, first_user_message: str) -> None:
-    """Set the conversation title from the first user message."""
+    """Generate and set an intelligent conversation title via LLM."""
     try:
-        title = first_user_message.strip()[:60]
-        if len(first_user_message.strip()) > 60:
-            title += "…"
+        title = await asyncio.to_thread(generate_title, first_user_message)
         await conversations().update_one(
             {"_id": ObjectId(conv_id)},
             {"$set": {"title": title}},

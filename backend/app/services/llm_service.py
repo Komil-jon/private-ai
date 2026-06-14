@@ -74,6 +74,31 @@ User message: {message}
 Search queries (one per line):"""
 
 
+def generate_title(user_message: str) -> str:
+    """
+    Generate a concise 3-6 word conversation title from the user's first message.
+    Falls back to the truncated first message on any error.
+    """
+    if not user_message.strip():
+        return "New conversation"
+    prompt = (
+        "Generate a concise 3 to 6 word title for a conversation that begins with the "
+        "following user message. Reply with the title only — no quotes, no punctuation "
+        "at the end, no explanation.\n\n"
+        f"User message: {user_message.strip()[:400]}"
+    )
+    try:
+        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        title = (resp.text or "").strip().strip('"\'').strip()
+        if title:
+            return title[0].upper() + title[1:80]
+    except Exception as exc:
+        log.warning("Title generation failed: %s", exc)
+    # Fallback: truncate the raw message
+    raw = user_message.strip()
+    return raw[:55] + "…" if len(raw) > 55 else raw
+
+
 def plan_search_queries(user_message: str, context: str = "") -> List[str]:
     """
     Returns 1–3 optimised search queries for the user message.
