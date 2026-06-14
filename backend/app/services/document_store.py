@@ -39,13 +39,13 @@ log = logging.getLogger("obelius.docstore")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 COLLECTION      = "company_docs"
-CHUNK_SIZE      = 400
-CHUNK_OVERLAP   = 80
+CHUNK_SIZE      = 800          # larger chunks = fewer Gemini API calls = faster upload
+CHUNK_OVERLAP   = 120
 TOP_K           = 5
 VECTOR_SIZE     = 768          # truncated from gemini-embedding-001's 3072 — good balance of accuracy vs storage
 EMBED_MODEL     = "gemini-embedding-001"
-EMBED_BATCH     = 50           # safe batch size; model supports up to 100
-SCORE_THRESHOLD = 0.55
+EMBED_BATCH     = 100          # model supports up to 100 per call
+SCORE_THRESHOLD = 0.50         # slightly lower threshold since larger chunks are less pinpoint
 
 # ── Lazy singletons ───────────────────────────────────────────────────────────
 _qdrant: Optional[QdrantClient] = None

@@ -51,6 +51,12 @@ _WEB_SIGNALS = [
 # When these appear and no doc context was found, we do NOT fall back to web —
 # the right answer is "not in the uploaded docs".
 _INTERNAL_SIGNALS = [
+    # direct file/document references — user is clearly asking about uploaded content
+    "the file", "this file", "the document", "this document", "the pdf",
+    "the docx", "the uploaded", "uploaded file", "uploaded document",
+    "describe the", "summarise the", "summarize the", "what does the",
+    "what is in", "tell me about the", "explain the",
+    # company-internal topic signals
     "our policy", "our procedure", "our company", "our team", "our department",
     "company policy", "hr policy", "internal", "employee handbook",
     "onboarding", "benefits", "leave policy", "vacation policy",
