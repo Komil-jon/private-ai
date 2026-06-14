@@ -146,8 +146,8 @@ def _build_prompt(
     doc_block = ""
     if has_docs:
         doc_block = "\n\n--- DOCUMENT CONTEXT ---\n"
-        doc_block += "Excerpts retrieved from the user's uploaded documents. "
-        doc_block += "Cite the source filename when relevant.\n\n"
+        doc_block += "Excerpts from the company knowledge base and any user-uploaded documents. "
+        doc_block += "Cite the source filename (and page if known) when quoting.\n\n"
         for i, chunk in enumerate(context_chunks):
             page_info = f", page {chunk['page']}" if chunk.get("page") else ""
             doc_block += (

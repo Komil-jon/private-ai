@@ -15,13 +15,12 @@ from app.routes.process import router as process_router
 from app.routes.upload  import router as upload_router
 from app.routes.history import router as history_router
 from app.services.mongo import init_db, close_db
-from app.services.document_store import init_docstore
+from app.services.document_store import init_docstore, ingest_company_docs
 from app.services.graph_store import init_graph
 
 BASE_DIR     = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
-UPLOAD_DIR   = os.path.join(BASE_DIR, "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+DOCS_DIR     = os.path.join(BASE_DIR, "docs")
 
 # Add telegram/ dir to sys.path so our bot modules resolve without the 'telegram.' prefix.
 # This avoids shadowing the python-telegram-bot library (our dir has no __init__.py).
@@ -43,6 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     loop = asyncio.get_event_loop()
     with concurrent.futures.ThreadPoolExecutor() as pool:
         await loop.run_in_executor(pool, init_docstore)
+        await loop.run_in_executor(pool, lambda: ingest_company_docs(DOCS_DIR))
     try:
         await loop.run_in_executor(None, init_graph)
     except Exception as exc:

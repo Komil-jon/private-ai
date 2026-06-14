@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from app.services.auth_dep import optional_user, UserContext
 from app.services.mongo import conversations, messages
 from app.services.memory import get_user_profile, update_user_memory
-from app.services.document_store import retrieve_context, session_has_documents
+from app.services.document_store import retrieve_context_multi, session_has_documents, COMPANY_BASE_KEY
 from app.services.graph_store import query_graph
 from app.services.llm_service import stream_reply, plan_search_queries, generate_title
 from app.services import web_search as ws
@@ -234,18 +234,16 @@ async def stream(
     if active_conv_id and not session_has_documents(doc_key) and session_has_documents(session_id):
         doc_key = session_id
 
-    context_chunks = []
-    if session_has_documents(doc_key):
-        last_user = next(
-            (m.content for m in reversed(conversation) if m.role == "user"), ""
-        )
-        context_chunks = retrieve_context(doc_key, last_user)
-
-    # ── Graph context (Neo4j) ─────────────────────────────────────────────────
-    # Runs alongside Qdrant — adds entity relationship context to the prompt.
     last_user_msg = next(
         (m.content for m in reversed(conversation) if m.role == "user"), ""
     )
+
+    # Always search company base knowledge + user's own uploaded docs (if any)
+    search_keys = [doc_key, COMPANY_BASE_KEY] if doc_key != COMPANY_BASE_KEY else [COMPANY_BASE_KEY]
+    context_chunks = retrieve_context_multi(search_keys, last_user_msg)
+
+    # ── Graph context (Neo4j) ─────────────────────────────────────────────────
+    # Runs alongside Qdrant — adds entity relationship context to the prompt.
     _graph_loop = asyncio.get_running_loop()
     graph_text = await _graph_loop.run_in_executor(
         None, lambda: query_graph(doc_key, last_user_msg)

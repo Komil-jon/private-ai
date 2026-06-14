@@ -38,14 +38,15 @@ load_dotenv()
 log = logging.getLogger("obelius.docstore")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-COLLECTION      = "company_docs"
-CHUNK_SIZE      = 800          # larger chunks = fewer Gemini API calls = faster upload
-CHUNK_OVERLAP   = 120
-TOP_K           = 5
-VECTOR_SIZE     = 768          # truncated from gemini-embedding-001's 3072 — good balance of accuracy vs storage
-EMBED_MODEL     = "gemini-embedding-001"
-EMBED_BATCH     = 100          # model supports up to 100 per call
-SCORE_THRESHOLD = 0.50         # slightly lower threshold since larger chunks are less pinpoint
+COLLECTION        = "company_docs"
+COMPANY_BASE_KEY  = "COMPANY_BASE"   # reserved key for pre-loaded company documents
+CHUNK_SIZE        = 800          # larger chunks = fewer Gemini API calls = faster upload
+CHUNK_OVERLAP     = 120
+TOP_K             = 6
+VECTOR_SIZE       = 768          # truncated from gemini-embedding-001's 3072 — good balance of accuracy vs storage
+EMBED_MODEL       = "gemini-embedding-001"
+EMBED_BATCH       = 100          # model supports up to 100 per call
+SCORE_THRESHOLD   = 0.50         # slightly lower threshold since larger chunks are less pinpoint
 
 # ── Lazy singletons ───────────────────────────────────────────────────────────
 _qdrant: Optional[QdrantClient] = None
@@ -198,18 +199,41 @@ def store_document(session_id: str, filename: str, pages: List[tuple]) -> int:
 
 def retrieve_context(session_id: str, query: str) -> List[Dict[str, Any]]:
     """Return top-k semantically relevant chunks for this session + query."""
-    if not query.strip():
+    return retrieve_context_multi([session_id], query)
+
+
+def retrieve_context_multi(keys: List[str], query: str) -> List[Dict[str, Any]]:
+    """
+    Return top-k semantically relevant chunks across multiple session keys.
+    Always call with [user_doc_key, COMPANY_BASE_KEY] so company docs are
+    always searched alongside any user-uploaded files.
+    """
+    if not query.strip() or not keys:
+        return []
+
+    unique_keys = list(dict.fromkeys(k for k in keys if k))
+    if not unique_keys:
         return []
 
     client = _get_client()
     vec    = _embed([query])[0]
 
+    if len(unique_keys) == 1:
+        query_filter = Filter(
+            must=[FieldCondition(key="session_id", match=MatchValue(value=unique_keys[0]))]
+        )
+    else:
+        query_filter = Filter(
+            should=[
+                FieldCondition(key="session_id", match=MatchValue(value=k))
+                for k in unique_keys
+            ]
+        )
+
     response = client.query_points(
         collection_name=COLLECTION,
         query=vec,
-        query_filter=Filter(
-            must=[FieldCondition(key="session_id", match=MatchValue(value=session_id))]
-        ),
+        query_filter=query_filter,
         limit=TOP_K,
         with_payload=True,
         score_threshold=SCORE_THRESHOLD,
@@ -222,6 +246,7 @@ def retrieve_context(session_id: str, query: str) -> List[Dict[str, Any]]:
             "chunk":    h.payload.get("chunk_idx"),
             "text":     h.payload["text"],
             "score":    round(h.score, 3),
+            "source":   "company" if h.payload.get("session_id") == COMPANY_BASE_KEY else "user",
         }
         for h in response.points
     ]
@@ -254,6 +279,43 @@ def clear_session(session_id: str) -> None:
 
     from app.services.graph_store import clear_session_graph
     clear_session_graph(session_id)
+
+
+def ingest_company_docs(docs_dir: str) -> None:
+    """
+    Read all supported files from docs_dir and store them under COMPANY_BASE_KEY.
+    Skips filenames already present in Qdrant — safe to call on every startup.
+    To re-ingest a changed file, delete it from Qdrant first (clear_session(COMPANY_BASE_KEY)).
+    """
+    import os
+    from app.services.parser import parse_file
+
+    if not os.path.isdir(docs_dir):
+        log.warning("Company docs directory not found: %s — skipping ingestion.", docs_dir)
+        return
+
+    already_ingested = set(list_files(COMPANY_BASE_KEY))
+    log.info("Company base: %d file(s) already in Qdrant.", len(already_ingested))
+
+    supported = {".pdf", ".docx", ".txt", ".csv"}
+    for fname in sorted(os.listdir(docs_dir)):
+        if os.path.splitext(fname)[-1].lower() not in supported:
+            continue
+        if fname in already_ingested:
+            log.info("Skipping already-ingested company doc: %s", fname)
+            continue
+        fpath = os.path.join(docs_dir, fname)
+        try:
+            with open(fpath, "rb") as f:
+                content = f.read()
+            pages = parse_file(fname, content)
+            if not pages:
+                log.warning("Could not extract text from company doc: %s", fname)
+                continue
+            count = store_document(COMPANY_BASE_KEY, fname, pages)
+            log.info("Ingested company doc: %s → %d chunks", fname, count)
+        except Exception as exc:
+            log.error("Failed to ingest company doc %s: %s", fname, exc)
 
 
 def list_files(session_id: str) -> List[str]:
