@@ -221,8 +221,15 @@ async def stream(
             conversation = []
 
     # ── Document context ──────────────────────────────────────────────────────
-    # Key: use conv_id when available so docs are scoped to this conversation only.
+    # Primary key is conv_id (scopes docs to this conversation).
+    # Fallback to session_id handles the case where the user uploaded a file
+    # before their first message — at upload time no conv_id existed yet so
+    # the file was stored under session_id, but by query time active_conv_id
+    # has been created and is different.
     doc_key = active_conv_id if active_conv_id else session_id
+    if active_conv_id and not session_has_documents(doc_key) and session_has_documents(session_id):
+        doc_key = session_id
+
     context_chunks = []
     if session_has_documents(doc_key):
         last_user = next(
