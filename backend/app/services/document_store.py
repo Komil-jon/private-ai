@@ -1,7 +1,7 @@
 """
 document_store.py — Qdrant Cloud-backed semantic document store
 ================================================================
-Embedding is done via Gemini text-embedding-004 API (768 dims) — no local
+Embedding is done via Gemini gemini-embedding-001 API (768 dims) — no local
 ONNX model, no RAM spike, works fine on Render's free 512 MB tier.
 
 Upload flow:
@@ -20,6 +20,7 @@ from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types as genai_types
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -41,9 +42,9 @@ COLLECTION      = "company_docs"
 CHUNK_SIZE      = 400
 CHUNK_OVERLAP   = 80
 TOP_K           = 5
-VECTOR_SIZE     = 768          # Gemini text-embedding-004 output dimension
-EMBED_MODEL     = "text-embedding-004"
-EMBED_BATCH     = 50           # Gemini allows up to 100 per call; 50 is safe
+VECTOR_SIZE     = 768          # truncated from gemini-embedding-001's 3072 — good balance of accuracy vs storage
+EMBED_MODEL     = "gemini-embedding-001"
+EMBED_BATCH     = 50           # safe batch size; model supports up to 100
 SCORE_THRESHOLD = 0.55
 
 # ── Lazy singletons ───────────────────────────────────────────────────────────
@@ -132,6 +133,7 @@ def _embed(texts: List[str]) -> List[List[float]]:
         result = client.models.embed_content(
             model=EMBED_MODEL,
             contents=batch,
+            config=genai_types.EmbedContentConfig(output_dimensionality=VECTOR_SIZE),
         )
         vectors.extend(e.values for e in result.embeddings)
 
