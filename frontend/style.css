@@ -187,11 +187,8 @@ History Drawer
   flex: 1 1 auto;
   padding: 0.4vh 0;
 }
-.history-list::-webkit-scrollbar { width: 0.25vh; }
-.history-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 228, 181, 0.2);
-  border-radius: 0.25vh;
-}
+.history-list::-webkit-scrollbar { display: none; }
+.history-list { scrollbar-width: none; }
 
 .history-empty {
   font-size: 0.8vh;
@@ -490,13 +487,8 @@ Upload Panel (inside message-box, expands upward)
   overflow-y: auto;
 }
 
-.file-list::-webkit-scrollbar {
-  width: 0.3vh;
-}
-.file-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 228, 181, 0.3);
-  border-radius: 0.3vh;
-}
+.file-list::-webkit-scrollbar { display: none; }
+.file-list { scrollbar-width: none; }
 
 .file-item {
   display: flex;
@@ -1396,11 +1388,8 @@ AI Disclaimer
   padding: 0.3vh 0;
   min-height: 0;
 }
-.conv-list::-webkit-scrollbar { width: 0.25vh; }
-.conv-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 228, 181, 0.15);
-  border-radius: 0.25vh;
-}
+.conv-list::-webkit-scrollbar { display: none; }
+.conv-list { scrollbar-width: none; }
 
 .conv-empty {
   font-size: 0.78vh;
