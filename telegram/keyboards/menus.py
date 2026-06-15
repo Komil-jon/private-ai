@@ -147,6 +147,19 @@ def upload_success_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
+def company_picker_keyboard(companies: list, user_email: str = "") -> InlineKeyboardMarkup:
+    """One button per company. Highlights the one matching the user's email domain."""
+    email_domain = user_email.split("@")[1].lower() if "@" in user_email else ""
+    buttons: list[list[InlineKeyboardButton]] = []
+    for company in companies:
+        is_match = email_domain and email_domain == company.get("domain", "").lower()
+        label    = ("⭐ " if is_match else "🏢 ") + company["name"]
+        if is_match:
+            label += " (Suggested)"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"company:{company['id']}")])
+    return InlineKeyboardMarkup(buttons)
+
+
 def memory_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("🗑️ Clear my memory", callback_data="memory:clear"),

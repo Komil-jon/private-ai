@@ -86,6 +86,13 @@ async def set_active_conv(telegram_id: int, conv_id: Optional[str]) -> None:
     )
 
 
+async def set_company(telegram_id: int, company_id: Optional[str]) -> None:
+    await _sessions().update_one(
+        {"telegram_id": telegram_id},
+        {"$set": {"company_id": company_id, "updated_at": datetime.now(timezone.utc)}},
+    )
+
+
 # ── One-time auth state ───────────────────────────────────────────────────────
 
 async def create_auth_state(telegram_id: int) -> str:

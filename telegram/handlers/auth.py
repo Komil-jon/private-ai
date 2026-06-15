@@ -68,18 +68,33 @@ async def cmd_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    full_name = session.get("full_name") or "—"
-    username  = session.get("username")  or "—"
-    email     = session.get("email")     or "—"
-    conv_id   = session.get("active_conv_id") or "none (new chat)"
+    full_name  = session.get("full_name") or "—"
+    username   = session.get("username")  or "—"
+    email      = session.get("email")     or "—"
+    conv_id    = session.get("active_conv_id") or "none (new chat)"
+    company_id = session.get("company_id")
+
+    # Resolve company display name from session (may already be stored)
+    company_line = ""
+    if company_id:
+        from services.backend import get_companies
+        try:
+            companies    = await get_companies()
+            company_name = next((c["name"] for c in companies if c["id"] == company_id), company_id)
+            company_line = f"Company:     <b>{company_name}</b>\n"
+        except Exception:
+            company_line = f"Company:     <code>{company_id}</code>\n"
+    else:
+        company_line = "Company:     <i>not set — use /company</i>\n"
 
     await update.message.reply_text(
         f"<b>👤 Account</b>\n\n"
         f"Name:        <b>{full_name}</b>\n"
         f"Username:    <code>{username}</code>\n"
         f"Email:       <code>{email}</code>\n"
+        f"{company_line}"
         f"Active chat: <code>{conv_id}</code>\n\n"
-        f"/logout to sign out.",
+        f"/company to switch company · /logout to sign out.",
         parse_mode=ParseMode.HTML,
         reply_markup=main_menu(logged_in=True),
     )

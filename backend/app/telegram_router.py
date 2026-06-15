@@ -150,7 +150,8 @@ async def telegram_callback(
 
     await save_session(telegram_id, jwt, user)
 
-    # Send proactive login confirmation to the Telegram chat with the main menu keyboard
+    # Send proactive login confirmation to the Telegram chat with the main menu keyboard.
+    # Then, if no company is selected yet, follow up with the company picker.
     if BOT_TOKEN:
         name  = user.get("full_name") or user.get("username") or "there"
         email = user.get("email") or ""
@@ -181,6 +182,53 @@ async def telegram_callback(
                 )
                 if resp.status_code != 200:
                     log.warning("sendMessage returned %s: %s", resp.status_code, resp.text)
+
+                # Check if a company is already selected; if not, send the picker
+                try:
+                    company_resp = await client.get(
+                        f"{BACKEND_URL}/api/user/company",
+                        headers={"Authorization": f"Bearer {jwt}"},
+                        timeout=5.0,
+                    )
+                    company_data = company_resp.json() if company_resp.status_code == 200 else {}
+                except Exception:
+                    company_data = {}
+
+                if not company_data.get("company_id"):
+                    try:
+                        companies_resp = await client.get(
+                            f"{BACKEND_URL}/api/companies", timeout=5.0
+                        )
+                        companies = companies_resp.json() if companies_resp.status_code == 200 else []
+                    except Exception:
+                        companies = []
+
+                    if companies:
+                        email_domain = email.split("@")[1].lower() if "@" in email else ""
+                        inline_buttons = []
+                        for company in companies:
+                            is_match = email_domain and email_domain == company.get("domain", "").lower()
+                            label    = ("⭐ " if is_match else "🏢 ") + company["name"]
+                            if is_match:
+                                label += " (Suggested)"
+                            inline_buttons.append([{
+                                "text":          label,
+                                "callback_data": f"company:{company['id']}",
+                            }])
+
+                        await client.post(
+                            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                            json={
+                                "chat_id":    telegram_id,
+                                "text":       (
+                                    "🏢 <b>One more step — select your company</b>\n\n"
+                                    "Choose the company you work for to access "
+                                    "the right knowledge base:"
+                                ),
+                                "parse_mode": "HTML",
+                                "reply_markup": {"inline_keyboard": inline_buttons},
+                            },
+                        )
         except Exception as exc:
             log.warning("Could not send login confirmation message: %s", exc)
 

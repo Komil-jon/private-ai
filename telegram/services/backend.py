@@ -49,10 +49,13 @@ async def stream_chat(
     session_key: str,
     conv_id: Optional[str],
     message: str,
+    company_id: Optional[str] = None,
 ) -> AsyncGenerator[dict, None]:
     """Open the backend SSE /stream endpoint and yield parsed event dicts."""
     headers = {"Authorization": f"Bearer {jwt}"}
     payload = {"message": message, "id": session_key, "conv_id": conv_id, "data": []}
+    if company_id:
+        payload["company_id"] = company_id
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
@@ -120,6 +123,32 @@ async def delete_all_conversations(jwt: str) -> int:
     headers = {"Authorization": f"Bearer {jwt}"}
     resp = await _client().delete(f"{BACKEND_URL}/api/conversations/all", headers=headers)
     return resp.json().get("deleted", 0)
+
+
+# ── Company ───────────────────────────────────────────────────────────────────
+
+async def get_companies() -> list:
+    resp = await _client().get(f"{BACKEND_URL}/api/companies")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def get_user_company(jwt: str) -> dict:
+    headers = {"Authorization": f"Bearer {jwt}"}
+    resp = await _client().get(f"{BACKEND_URL}/api/user/company", headers=headers)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def set_user_company(jwt: str, company_id: str) -> dict:
+    headers = {"Authorization": f"Bearer {jwt}"}
+    resp = await _client().post(
+        f"{BACKEND_URL}/api/user/company",
+        json={"company_id": company_id},
+        headers=headers,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def create_conversation(jwt: str, title: str = "New conversation") -> dict:

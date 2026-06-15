@@ -19,6 +19,7 @@ _HELP_TEXT = """
 /logout  — Sign out of this device
 /newchat — Start a fresh conversation
 /history — Browse all your past chats
+/company — View or switch your company knowledge base
 /memory  — See &amp; manage your AI memory
 /clear   — Delete all conversation history
 /help    — This message

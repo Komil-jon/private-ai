@@ -67,6 +67,7 @@ from telegram.ext import (
 from config import BOT_TOKEN, BOT_MODE, WEBHOOK_URL, WEBHOOK_SECRET, WEBHOOK_PATH
 from handlers.start import cmd_start, cmd_help
 from handlers.auth import cmd_login, cmd_logout, cmd_account
+from handlers.company import cmd_company
 from handlers.chat import handle_message
 from handlers.documents import handle_document, handle_photo, handle_upload_file_btn
 from handlers.history import cmd_history, cmd_newchat, cmd_clear, handle_callback
@@ -93,6 +94,7 @@ _COMMANDS = [
     BotCommand("clear",   "🗑️ Delete all conversations"),
     BotCommand("memory",  "🧠 View AI memory about you"),
     BotCommand("account", "👤 Account info"),
+    BotCommand("company", "🏢 View / switch company"),
 ]
 
 
@@ -134,6 +136,7 @@ async def route_reply_button(update: Update, context) -> None:
         "📎 Upload File": handle_upload_file_btn,
         "🧠 My Memory":   cmd_memory,
         "👤 Account":     cmd_account,
+        "🏢 Company":     cmd_company,
         "❓ Help":        cmd_help,
         "🔐 Login":       cmd_login,
     }
@@ -166,6 +169,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("clear",   cmd_clear))
     app.add_handler(CommandHandler("memory",  cmd_memory))
+    app.add_handler(CommandHandler("company", cmd_company))
 
     # Inline keyboard callbacks (history, sources, confirm, memory actions)
     app.add_handler(CallbackQueryHandler(handle_callback))
@@ -255,6 +259,7 @@ def _build_polling_application() -> Application:
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("clear",   cmd_clear))
     app.add_handler(CommandHandler("memory",  cmd_memory))
+    app.add_handler(CommandHandler("company", cmd_company))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))

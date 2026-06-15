@@ -23,6 +23,7 @@ from keyboards.menus import (
     main_menu,
 )
 from services import backend, session as sess
+from services.session import set_company
 from config import build_login_url
 
 log = logging.getLogger("obelius.tg.history")
@@ -230,3 +231,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode=ParseMode.HTML,
             reply_markup=confirm_keyboard("memory_clear"),
         )
+
+    # ── Company selection ─────────────────────────────────────────────────────
+    elif data.startswith("company:"):
+        company_id = data.split(":", 1)[1]
+        try:
+            await backend.set_user_company(jwt, company_id)
+            await set_company(tg_user.id, company_id)
+            companies    = await backend.get_companies()
+            company_name = next(
+                (c["name"] for c in companies if c["id"] == company_id), company_id
+            )
+            await query.edit_message_text(
+                f"✅ <b>Company set to {company_name}.</b>\n\n"
+                "Your knowledge base is ready. Start chatting — I'll answer from your company's documents!",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as exc:
+            log.warning("company select failed: %s", exc)
+            await query.edit_message_text(f"❌ Failed to set company: {exc}")

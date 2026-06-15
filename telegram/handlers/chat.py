@@ -105,6 +105,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     jwt         = session["jwt_token"]
     conv_id     = session.get("active_conv_id")
+    company_id  = session.get("company_id")
     tg_id       = update.effective_user.id
     session_key = f"sess_tg_{tg_id}"
 
@@ -120,7 +121,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     new_conv_id   = conv_id
 
     try:
-        async for event in backend.stream_chat(jwt, session_key, conv_id, msg_text):
+        async for event in backend.stream_chat(jwt, session_key, conv_id, msg_text, company_id):
             etype = event.get("type")
 
             if etype == "search_info" and event.get("triggered"):
