@@ -66,12 +66,15 @@ def _extract_token(request: Request) -> Optional[str]:
     return request.cookies.get("eternal_token")
 
 
-async def optional_user(request: Request) -> Optional[UserContext]:
+async def verify_token(token: Optional[str]) -> Optional[UserContext]:
     """
-    Dependency: returns UserContext if token is valid, None otherwise.
-    Never raises — guests pass through as None.
+    Verify a raw JWT string against auth.eternal.uz. Never raises — returns
+    None on any invalid/expired/unreachable case.
+
+    Shared by optional_user() (REST, header/cookie) and the MCP auth
+    middleware (mcp_auth.py, header-only) so there is exactly one place
+    that decides what counts as a valid session.
     """
-    token = _extract_token(request)
     if not token:
         return None
     try:
@@ -91,6 +94,14 @@ async def optional_user(request: Request) -> Optional[UserContext]:
     except Exception as exc:
         log.warning("Auth verify failed: %s", exc)
         return None
+
+
+async def optional_user(request: Request) -> Optional[UserContext]:
+    """
+    Dependency: returns UserContext if token is valid, None otherwise.
+    Never raises — guests pass through as None.
+    """
+    return await verify_token(_extract_token(request))
 
 
 async def require_user(

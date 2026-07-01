@@ -12,3 +12,4 @@ qdrant-client
 ddgs
 python-telegram-bot[webhooks]==21.6
 neo4j
+mcp

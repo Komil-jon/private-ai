@@ -19,6 +19,7 @@ from app.services.mongo  import init_db, close_db
 from app.services.document_store import init_docstore, ingest_company_docs
 from app.services.graph_store import init_graph
 from app.services.companies import COMPANIES
+from app.mcp_server import mcp, mcp_asgi_app
 
 BASE_DIR     = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -87,7 +88,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as exc:
             _logger.error("Telegram webhook setup failed: %s", exc)
 
-    yield
+    # MCP streamable-HTTP transport needs its session manager's task group
+    # running for the lifetime of the app.
+    async with mcp.session_manager.run():
+        yield
 
     # Webhook mode: clean up bot application
     if BOT_MODE == "webhook" and BOT_TOKEN:
@@ -116,6 +120,11 @@ app.include_router(process_router)
 app.include_router(upload_router)
 app.include_router(history_router)
 app.include_router(company_router)
+
+# MCP server — every request is auth-gated inside mcp_asgi_app itself (see
+# mcp_server.py / mcp_auth.py) via Bearer token, independent of the
+# CORSMiddleware above (which only affects browser fetches, not MCP clients).
+app.mount("/mcp", mcp_asgi_app)
 
 # Telegram bot support routes (login redirect, auth callback, webhook)
 from app.telegram_router import router as telegram_router
