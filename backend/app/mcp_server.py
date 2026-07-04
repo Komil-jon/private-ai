@@ -49,8 +49,9 @@ log = logging.getLogger("obelius.mcp")
 
 # Comma-separated list of hostnames this server is reachable as (DNS-rebinding
 # guard on the streamable-HTTP transport). Must match the Host header real
-# requests arrive with in production (set in backend/app/.env — this default
-# is this repo's actual Render hostname, see WEBHOOK_URL in that file).
+# requests arrive with in production (set in backend/app/.env — override
+# MCP_ALLOWED_HOSTS there whenever a new public domain is added, e.g. a
+# custom Render domain like www.obelius.uz).
 _ALLOWED_HOSTS = [h.strip() for h in os.getenv("MCP_ALLOWED_HOSTS", "private-ai-web.onrender.com").split(",") if h.strip()]
 _ALLOWED_ORIGINS = [f"https://{h}" for h in _ALLOWED_HOSTS]
 
