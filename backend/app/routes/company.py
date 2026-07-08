@@ -59,3 +59,26 @@ async def set_user_company(
         upsert=True,
     )
     return {"ok": True, "company_id": body.company_id}
+
+
+class SetWebSearchBody(BaseModel):
+    enabled: bool
+
+
+@router.get("/user/websearch")
+async def get_user_websearch(user: UserContext = Depends(require_user)):
+    doc = await user_settings().find_one({"user_id": user.user_id})
+    return {"web_search_enabled": (doc or {}).get("web_search_enabled", True)}
+
+
+@router.post("/user/websearch")
+async def set_user_websearch(
+    body: SetWebSearchBody,
+    user: UserContext = Depends(require_user),
+):
+    await user_settings().update_one(
+        {"user_id": user.user_id},
+        {"$set": {"user_id": user.user_id, "web_search_enabled": body.enabled}},
+        upsert=True,
+    )
+    return {"ok": True, "web_search_enabled": body.enabled}

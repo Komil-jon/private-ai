@@ -18,7 +18,7 @@ Security model
   assignment in Mongo — exactly like GET /api/user/company does. This
   closes off the obvious cross-tenant IDOR: a client cannot simply pass
   someone else's id to read their data.
-- A small per-user in-memory rate limit guards the paid Gemini /
+- A small per-user in-memory rate limit guards the local LLM /
   embedding / web-search calls each tool triggers from being hammered
   by a runaway or compromised client.
 - This surface is read-only (search/query) by design. Upload and

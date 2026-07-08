@@ -72,6 +72,7 @@ from handlers.chat import handle_message
 from handlers.documents import handle_document, handle_photo, handle_upload_file_btn
 from handlers.history import cmd_history, cmd_newchat, cmd_clear, handle_callback
 from handlers.memory import cmd_memory
+from handlers.websearch import cmd_websearch
 from services.session import init_indexes
 
 logging.basicConfig(
@@ -95,6 +96,7 @@ _COMMANDS = [
     BotCommand("memory",  "🧠 View AI memory about you"),
     BotCommand("account", "👤 Account info"),
     BotCommand("company", "🏢 View / switch company"),
+    BotCommand("websearch", "🌐 View / toggle live web search"),
 ]
 
 
@@ -170,6 +172,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("clear",   cmd_clear))
     app.add_handler(CommandHandler("memory",  cmd_memory))
     app.add_handler(CommandHandler("company", cmd_company))
+    app.add_handler(CommandHandler("websearch", cmd_websearch))
 
     # Inline keyboard callbacks (history, sources, confirm, memory actions)
     app.add_handler(CallbackQueryHandler(handle_callback))
@@ -260,6 +263,7 @@ def _build_polling_application() -> Application:
     app.add_handler(CommandHandler("clear",   cmd_clear))
     app.add_handler(CommandHandler("memory",  cmd_memory))
     app.add_handler(CommandHandler("company", cmd_company))
+    app.add_handler(CommandHandler("websearch", cmd_websearch))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))

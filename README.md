@@ -110,18 +110,29 @@ pip install -r requirements.txt
 
 ---
 
-### 4. Configure Environment Variables
+### 4. Set Up the Local LLM
 
-Create a `.env` file inside the `backend/` folder:
+This project runs its language model locally via [Ollama](https://ollama.com) instead of a cloud API.
+
+```bash
+brew install ollama
+brew services start ollama
+ollama pull qwen3:8b            # chat / generation model
+ollama pull nomic-embed-text    # embedding model
+```
+
+No `API_KEY` is required for the LLM anymore. Optionally override the defaults in your `.env`:
 
 ```env
-API_KEY=your_api_key_here
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_CHAT_MODEL=qwen3:8b
+OLLAMA_EMBED_MODEL=nomic-embed-text
 ```
 
 ⚠️ **Important:**
 
 * Never commit your `.env` file to GitHub
-* Keep your API key secure
+* Keep any remaining API keys (Qdrant, Neo4j, etc.) secure
 
 ---
 

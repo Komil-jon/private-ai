@@ -158,3 +158,22 @@ async def create_conversation(jwt: str, title: str = "New conversation") -> dict
     )
     resp.raise_for_status()
     return resp.json()
+
+
+# ── Web search preference ──────────────────────────────────────────────────────
+# Shared with the web UI's toggle button via the same user_id.
+
+async def get_web_search_pref(jwt: str) -> dict:
+    headers = {"Authorization": f"Bearer {jwt}"}
+    resp = await _client().get(f"{BACKEND_URL}/api/user/websearch", headers=headers)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def set_web_search_pref(jwt: str, enabled: bool) -> dict:
+    headers = {"Authorization": f"Bearer {jwt}"}
+    resp = await _client().post(
+        f"{BACKEND_URL}/api/user/websearch", json={"enabled": enabled}, headers=headers
+    )
+    resp.raise_for_status()
+    return resp.json()

@@ -1,7 +1,7 @@
 """
 memory.py  —  User memory and personalisation
 ==============================================
-After each AI reply, a short background Gemini call extracts any
+After each AI reply, a short background local-LLM call extracts any
 learnable facts from the exchange and upserts them into user_memory.
 
 Stored per user:
@@ -21,18 +21,10 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from google import genai
+from app.services import ollama_client
 from app.services.mongo import user_memory
 
 log = logging.getLogger("obelius.memory")
-
-# Reuse the same genai client pattern from llm_service
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-_api_key = os.getenv("API_KEY", "")
-_genai_client = genai.Client(api_key=_api_key) if _api_key else None
 
 MAX_FACTS = 40  # cap to keep prompts from bloating
 
@@ -63,11 +55,7 @@ async def update_user_memory(
 ) -> None:
     """
     Background task: extract new facts from this exchange and upsert.
-    Silently no-ops if the genai client isn't configured.
     """
-    if not _genai_client:
-        return
-
     try:
         existing_doc = await user_memory().find_one({"user_id": user_id})
         existing_facts: List[str] = existing_doc.get("facts", []) if existing_doc else []
@@ -93,11 +81,7 @@ Rules:
 - Respond ONLY with a JSON array of strings, e.g. ["fact1", "fact2"]
   or the word NONE. No preamble, no markdown fences."""
 
-        response = _genai_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-        raw = (response.text or "").strip()
+        raw = (ollama_client.generate(prompt) or "").strip()
 
         if raw == "NONE" or not raw:
             return
@@ -135,7 +119,7 @@ Rules:
 
 async def _regenerate_summary(facts: List[str]) -> str:
     """Generate a short prose summary from the current fact list."""
-    if not _genai_client or not facts:
+    if not facts:
         return ""
     try:
         fact_block = "\n".join(f"• {f}" for f in facts)
@@ -144,10 +128,6 @@ async def _regenerate_summary(facts: List[str]) -> str:
             f"what is known about this user based on these facts:\n{fact_block}\n"
             f"Write in third person. No preamble."
         )
-        resp = _genai_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-        return (resp.text or "").strip()
+        return (ollama_client.generate(prompt) or "").strip()
     except Exception:
         return ""

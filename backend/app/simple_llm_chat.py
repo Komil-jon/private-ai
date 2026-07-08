@@ -1,11 +1,4 @@
-from google import genai
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-API_KEY = os.getenv("API_KEY")
-
-client = genai.Client(api_key=API_KEY)
+from app.services import ollama_client
 
 input_text = ""
 chat_history = []
@@ -17,11 +10,8 @@ while input_text != "quit":
         break
     else:
         chat_history.append(input_text)
-        interaction = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=str(chat_history)
-        )
-        print(interaction.text)
+        reply = ollama_client.generate(str(chat_history))
+        print(reply)
         if len(chat_history) > 9:
             chat_history = chat_history[:9]
-        chat_history.append(interaction.text)
+        chat_history.append(reply)

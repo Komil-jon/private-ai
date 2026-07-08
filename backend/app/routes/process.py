@@ -15,10 +15,11 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
 
 from app.services.auth_dep import optional_user, UserContext
-from app.services.mongo import conversations, messages
+from app.services.mongo import conversations, messages, user_settings
 from app.services.memory import get_user_profile, update_user_memory
 from app.services.document_store import retrieve_context_multi, session_has_documents
 from app.services.companies import get_qdrant_key
+from app.services.context_manager import compact_history
 from app.services.graph_store import query_graph
 from app.services.llm_service import stream_reply, plan_search_queries, generate_title
 from app.services import web_search as ws
@@ -213,6 +214,11 @@ async def stream(
     # company_id comes from frontend after the user picks their company
     request_company_id: Optional[str] = body.get("company_id") or None
 
+    # Explicit web-search override from the client (web UI toggle / guest
+    # sessions). None means "no override" — fall back to the logged-in
+    # user's saved preference, or the automatic heuristic for guests.
+    explicit_web_pref: Optional[bool] = body.get("web_search_enabled")
+
     # The raw user message text (used for auto-title and memory)
     raw_message: str = body.get("message", "").strip()
 
@@ -264,6 +270,26 @@ async def stream(
         # Always ensure the current user message is in the conversation
         if raw_message and (not conversation or conversation[-1].content != raw_message):
             conversation.append(Message(role="user", content=raw_message))
+
+    # ── Web search preference ───────────────────────────────────────────────
+    # Explicit per-request override (web UI toggle) always wins. Otherwise,
+    # logged-in users fall back to their saved preference (shared with
+    # Telegram via the same user_id); guests default to the automatic
+    # heuristic below.
+    if explicit_web_pref is not None:
+        web_search_enabled = explicit_web_pref
+    elif user:
+        settings_doc = await user_settings().find_one({"user_id": user.user_id})
+        web_search_enabled = (settings_doc or {}).get("web_search_enabled", True)
+    else:
+        web_search_enabled = True
+
+    # ── Context window management ───────────────────────────────────────────
+    # The local model has a much smaller effective context than the old
+    # Gemini API call. Keep only the last few messages verbatim and fold
+    # anything older into a rolling summary (see context_manager.py) so
+    # long conversations don't blow the prompt budget.
+    conversation, history_summary = await compact_history(active_conv_id, conversation)
 
     # ── Document context ──────────────────────────────────────────────────────
     # Primary key is conv_id (scopes docs to this conversation).
@@ -326,7 +352,7 @@ async def stream(
     web_attempted    = False
     search_query     = raw_message   # single display label (first planned query)
     planned_queries: List[str] = []
-    if raw_message and _needs_web_search(raw_message, bool(context_chunks)):
+    if raw_message and web_search_enabled and _needs_web_search(raw_message, bool(context_chunks)):
         web_attempted = True
         loop_ref = asyncio.get_running_loop()
 
@@ -394,6 +420,7 @@ async def stream(
                     conversation, context_chunks, user_profile,
                     web_results, current_utc, web_attempted,
                     is_guest=(user is None),
+                    history_summary=history_summary,
                 ))
 
             tokens = await loop.run_in_executor(None, _run_sync)

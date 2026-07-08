@@ -5,11 +5,11 @@ Runs alongside the Qdrant vector store (document_store.py).
 Qdrant handles semantic similarity; Neo4j handles entity relationships.
 
 Upload flow:
-  document text → Gemini entity extractor → (Entity)-[RELATION]->(Entity)
+  document text → local LLM entity extractor → (Entity)-[RELATION]->(Entity)
   nodes + edges written to Neo4j, tagged with session_id + filename
 
 Retrieval flow:
-  user query → Gemini entity extractor → graph traversal → relationship strings
+  user query → local LLM entity extractor → graph traversal → relationship strings
   merged with Qdrant chunks in process.py before the final LLM call
 
 All Cypher uses $params (never string interpolation) to prevent injection.
@@ -25,6 +25,8 @@ import os
 from typing import List, Optional
 
 from dotenv import load_dotenv
+
+from app.services import ollama_client
 
 load_dotenv()
 
@@ -50,14 +52,6 @@ def _get_driver():
         log.info("Neo4j driver connected to %s", uri)
 
     return _driver
-
-
-# ── Gemini client (reuse pattern from memory.py) ─────────────────────────────
-_api_key = os.getenv("API_KEY", "")
-_genai_client = None
-if _api_key:
-    from google import genai as _genai
-    _genai_client = _genai.Client(api_key=_api_key)
 
 
 # ── Entity extraction prompt ──────────────────────────────────────────────────
@@ -95,15 +89,12 @@ Query: {query}"""
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _extract_triples(text: str) -> List[dict]:
-    """Call Gemini to extract (from, relation, to) triples from document text."""
-    if not _genai_client or not text.strip():
+    """Call the local LLM to extract (from, relation, to) triples from document text."""
+    if not text.strip():
         return []
     try:
         prompt = _EXTRACT_PROMPT.format(text=text[:6000])  # cap to avoid huge prompts
-        resp   = _genai_client.models.generate_content(
-            model="gemini-2.5-flash", contents=prompt
-        )
-        raw = (resp.text or "").strip().strip("```json").strip("```").strip()
+        raw = (ollama_client.generate(prompt) or "").strip().strip("```json").strip("```").strip()
         triples = json.loads(raw)
         if not isinstance(triples, list):
             return []
@@ -123,14 +114,11 @@ def _extract_triples(text: str) -> List[dict]:
 
 def _extract_query_entities(query: str) -> List[str]:
     """Extract entity names from a user query for graph lookup."""
-    if not _genai_client or not query.strip():
+    if not query.strip():
         return []
     try:
         prompt = _QUERY_ENTITIES_PROMPT.format(query=query)
-        resp   = _genai_client.models.generate_content(
-            model="gemini-2.5-flash", contents=prompt
-        )
-        raw = (resp.text or "").strip().strip("```json").strip("```").strip()
+        raw = (ollama_client.generate(prompt) or "").strip().strip("```json").strip("```").strip()
         entities = json.loads(raw)
         if isinstance(entities, list):
             return [str(e).strip() for e in entities if str(e).strip()][:6]

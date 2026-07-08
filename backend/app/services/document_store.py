@@ -1,14 +1,14 @@
 """
 document_store.py — Qdrant Cloud-backed semantic document store
 ================================================================
-Embedding is done via Gemini gemini-embedding-001 API (768 dims) — no local
-ONNX model, no RAM spike, works fine on Render's free 512 MB tier.
+Embedding is done via a local Ollama model (nomic-embed-text, 768 dims) —
+no external API calls, everything runs on-device.
 
 Upload flow:
-  text chunks → Gemini embed API → 768-dim vectors → Qdrant Cloud
+  text chunks → local embed model → 768-dim vectors → Qdrant Cloud
 
 Retrieve flow:
-  query → Gemini embed API → cosine search in Qdrant Cloud → top-k chunks
+  query → local embed model → cosine search in Qdrant Cloud → top-k chunks
 """
 
 from __future__ import annotations
@@ -19,8 +19,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types as genai_types
+from app.services import ollama_client
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -40,27 +39,16 @@ log = logging.getLogger("obelius.docstore")
 # ── Constants ─────────────────────────────────────────────────────────────────
 COLLECTION        = "company_docs"
 COMPANY_BASE_KEY  = "COMPANY_BASE"   # reserved key for pre-loaded company documents
-CHUNK_SIZE        = 800          # larger chunks = fewer Gemini API calls = faster upload
+CHUNK_SIZE        = 800          # larger chunks = fewer embed calls = faster upload
 CHUNK_OVERLAP     = 120
 TOP_K             = 6
-VECTOR_SIZE       = 768          # truncated from gemini-embedding-001's 3072 — good balance of accuracy vs storage
-EMBED_MODEL       = "gemini-embedding-001"
-EMBED_BATCH       = 100          # model supports up to 100 per call
+VECTOR_SIZE       = 768          # nomic-embed-text's native output size
+EMBED_MODEL       = "nomic-embed-text"
+EMBED_BATCH       = 100
 SCORE_THRESHOLD   = 0.50         # slightly lower threshold since larger chunks are less pinpoint
 
 # ── Lazy singletons ───────────────────────────────────────────────────────────
 _qdrant: Optional[QdrantClient] = None
-_gemini: Optional[genai.Client] = None
-
-
-def _get_gemini() -> genai.Client:
-    global _gemini
-    if _gemini is None:
-        api_key = os.getenv("API_KEY", "")
-        if not api_key:
-            raise RuntimeError("API_KEY not set — cannot embed documents.")
-        _gemini = genai.Client(api_key=api_key)
-    return _gemini
 
 
 def _get_client() -> QdrantClient:
@@ -88,8 +76,8 @@ def _ensure_collection(client: QdrantClient) -> None:
     existing = {c.name: c for c in client.get_collections().collections}
 
     if COLLECTION in existing:
-        # If the collection was created with the old 384-dim fastembed vectors,
-        # delete and recreate it so dimensions match Gemini's 768.
+        # If the collection was created with a different vector size,
+        # delete and recreate it so dimensions match the current embed model.
         info = client.get_collection(COLLECTION)
         current_size = info.config.params.vectors.size
         if current_size != VECTOR_SIZE:
@@ -122,21 +110,14 @@ def _ensure_collection(client: QdrantClient) -> None:
 
 def _embed(texts: List[str]) -> List[List[float]]:
     """
-    Embed texts using Gemini text-embedding-004.
-    Batches calls so we never exceed the API's per-request limit.
-    No local model loaded — zero RAM overhead.
+    Embed texts using the local Ollama embedding model.
+    Batches calls so requests stay a reasonable size.
     """
-    client  = _get_gemini()
     vectors = []
 
     for i in range(0, len(texts), EMBED_BATCH):
-        batch  = texts[i : i + EMBED_BATCH]
-        result = client.models.embed_content(
-            model=EMBED_MODEL,
-            contents=batch,
-            config=genai_types.EmbedContentConfig(output_dimensionality=VECTOR_SIZE),
-        )
-        vectors.extend(e.values for e in result.embeddings)
+        batch = texts[i : i + EMBED_BATCH]
+        vectors.extend(ollama_client.embed(batch, model=EMBED_MODEL))
 
     return vectors
 
@@ -159,7 +140,7 @@ def _chunk_text(text: str) -> List[str]:
 def init_docstore() -> None:
     """Called at startup. Connects to Qdrant and verifies the collection."""
     _get_client()
-    log.info("Document store ready (Qdrant Cloud + Gemini %s).", EMBED_MODEL)
+    log.info("Document store ready (Qdrant Cloud + local %s).", EMBED_MODEL)
 
 
 def store_document(session_id: str, filename: str, pages: List[tuple]) -> int:

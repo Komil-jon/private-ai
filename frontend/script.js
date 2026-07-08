@@ -24,6 +24,7 @@ marked.use({
 var currentUser      = null;
 var currentToken     = null;
 var currentCompany   = null;   // { id, name, domain } — set after company picker
+var webSearchEnabled = (localStorage.getItem('obelius_web_search_enabled') !== 'false'); // default true
 var activeConvId     = null;
 var conversationList = [];   // in-memory cache of loaded conversations
 var _streamGeneration = 0;   // incremented on every user-initiated conv switch; guards stale streams
@@ -113,6 +114,7 @@ async function checkAuth() {
             currentToken = null;
             currentUser  = parsedUser;
             renderAuthState(currentUser);
+            await syncWebSearchPref();
             await migrateGuestSessionIfNeeded();
             await ensureCompanySelected();
             await loadConversations();
@@ -134,6 +136,7 @@ async function checkAuth() {
 
     if (!token) {
       renderAuthState(null);
+      updateWebSearchButtonUI();
       hideLoadingMessage();
       firstMessage();
       return;
@@ -147,6 +150,7 @@ async function checkAuth() {
 
     if (!resp.ok) {
       renderAuthState(null);
+      updateWebSearchButtonUI();
       hideLoadingMessage();
       firstMessage();
       return;
@@ -156,6 +160,7 @@ async function checkAuth() {
     if (!data.valid) {
       localStorage.removeItem('eternal_token');
       renderAuthState(null);
+      updateWebSearchButtonUI();
       hideLoadingMessage();
       firstMessage();
       return;
@@ -165,6 +170,7 @@ async function checkAuth() {
     currentToken = token;
     currentUser  = data.user;
     renderAuthState(currentUser);
+    await syncWebSearchPref();
 
     // Migrate any guest conversation that existed before login
     await migrateGuestSessionIfNeeded();
@@ -192,6 +198,7 @@ async function checkAuth() {
   } catch (e) {
     console.warn('[auth] check failed:', e);
     renderAuthState(null);
+    updateWebSearchButtonUI();
     hideLoadingMessage();
     firstMessage();
   }
@@ -412,6 +419,53 @@ function renderAuthState(user) {
       '<div class="conv-empty">Sign in to see your conversations.</div>';
   }
 }
+
+/* =======================
+   WEB SEARCH TOGGLE
+   Off = never search the web, regardless of what the automatic heuristic
+   would decide. Persisted locally for guests; synced server-side (shared
+   with the Telegram bot's /websearch command) for logged-in users.
+======================= */
+function updateWebSearchButtonUI() {
+  var btn = document.getElementById('websearch-toggle-btn');
+  if (!btn) return;
+  btn.classList.toggle('disabled', !webSearchEnabled);
+  btn.title = webSearchEnabled
+    ? 'Web search: on (click to turn off)'
+    : 'Web search: off (click to turn on)';
+}
+
+async function syncWebSearchPref() {
+  if (!currentUser) { updateWebSearchButtonUI(); return; }
+  try {
+    var headers = {};
+    if (currentToken) headers['Authorization'] = 'Bearer ' + currentToken;
+    var resp = await fetch('/api/user/websearch', { headers: headers, credentials: 'include' });
+    if (resp.ok) {
+      var data = await resp.json();
+      webSearchEnabled = data.web_search_enabled !== false;
+      localStorage.setItem('obelius_web_search_enabled', String(webSearchEnabled));
+    }
+  } catch (e) { /* fall back to local preference */ }
+  updateWebSearchButtonUI();
+}
+
+document.getElementById('websearch-toggle-btn').addEventListener('click', async function () {
+  webSearchEnabled = !webSearchEnabled;
+  localStorage.setItem('obelius_web_search_enabled', String(webSearchEnabled));
+  updateWebSearchButtonUI();
+
+  if (currentUser) {
+    try {
+      var headers = { 'Content-Type': 'application/json' };
+      if (currentToken) headers['Authorization'] = 'Bearer ' + currentToken;
+      await fetch('/api/user/websearch', {
+        method: 'POST', headers: headers, credentials: 'include',
+        body: JSON.stringify({ enabled: webSearchEnabled }),
+      });
+    } catch (e) { /* local toggle already applied; server sync best-effort */ }
+  }
+});
 
 /* =======================
    AUTH — sign in / out
@@ -829,6 +883,7 @@ function sendMessageToServer(message) {
     data:    conversation,
     id:      id,
     message: message,
+    web_search_enabled: webSearchEnabled,
   };
 
   // Always include conv_id if we have one — backend uses it to find/create the conversation

@@ -5,7 +5,7 @@ Two modes:
   generate_reply()  — full text (kept for internal use / fallback)
   stream_reply()    — generator that yields raw token strings one by one
 
-Streaming uses client.models.generate_content_stream() from the google-genai SDK.
+Streaming uses a local Ollama model via services.ollama_client.
 Each yielded value is a plain string token so callers don't need to know the SDK.
 
 User personalisation:
@@ -13,23 +13,12 @@ User personalisation:
   will include what the AI already knows about the user.
 """
 
-from google import genai
-import os
 import logging
 from typing import List, Dict, Any, Generator, Optional
-from dotenv import load_dotenv
+
+from app.services import ollama_client
 
 log = logging.getLogger("obelius.llm")
-
-API_KEY = os.getenv("API_KEY")
-if not API_KEY:
-    load_dotenv()
-    API_KEY = os.getenv("API_KEY")
-
-if not API_KEY:
-    raise ValueError("API_KEY not found. Set it in your .env file or environment.")
-
-client = genai.Client(api_key=API_KEY)
 
 
 # ── Step 1 of agentic search: multi-query planner ───────────────────────────
@@ -88,8 +77,7 @@ def generate_title(user_message: str) -> str:
         f"User message: {user_message.strip()[:400]}"
     )
     try:
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        title = (resp.text or "").strip().strip('"\'').strip()
+        title = (ollama_client.generate(prompt) or "").strip().strip('"\'').strip()
         if title:
             return title[0].upper() + title[1:80]
     except Exception as exc:
@@ -113,8 +101,7 @@ def plan_search_queries(user_message: str, context: str = "") -> List[str]:
             context=context.strip() or "(none)",
             message=user_message.strip(),
         )
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        lines = (resp.text or "").strip().split("\n")
+        lines = (ollama_client.generate(prompt) or "").strip().split("\n")
         queries: List[str] = []
         for line in lines:
             q = line.strip().lstrip("-•*0123456789.)").strip()
@@ -138,6 +125,7 @@ def _build_prompt(
     current_time:     str = "",
     web_attempted:    bool = False,
     is_guest:         bool = False,
+    history_summary:  str = "",
 ) -> str:
     has_docs    = bool(context_chunks)
     has_web     = bool(web_context)
@@ -184,6 +172,19 @@ def _build_prompt(
 Use this to personalise your tone and answers. Reference it naturally —
 never explicitly say "I have a memory of you" or list facts robotically.
 --- END USER INFO ---
+"""
+
+    # ── Earlier-conversation summary block ──────────────────────────────────
+    # Older turns beyond the recent window are condensed here (see
+    # context_manager.py) so the raw conversation loop below only needs to
+    # carry the last few messages — keeps the prompt small for the local
+    # model's context window.
+    summary_block = ""
+    if history_summary and history_summary.strip():
+        summary_block = f"""
+--- EARLIER CONVERSATION (condensed) ---
+{history_summary.strip()}
+--- END SUMMARY — the most recent messages follow below in full ---
 """
 
     # ── System prompt ────────────────────────────────────────────────────────
@@ -243,7 +244,7 @@ Rules:
 - If a question is inappropriate, respond with exactly: PERSONAL
 - If content is unsafe, respond with exactly: IGNORED
 {time_line}{capability_block}
-{profile_block}{doc_block}{web_block}"""
+{profile_block}{summary_block}{doc_block}{web_block}"""
     else:
         system_prompt = f"""You are the Company Knowledge Assistant — a private AI that helps employees find answers from internal company documents such as HR policies, technical manuals, SOPs, meeting notes, and internal guidelines.
 
@@ -257,7 +258,7 @@ Rules:
 - If a question is inappropriate, respond with exactly: PERSONAL
 - If content is unsafe, respond with exactly: IGNORED
 {time_line}{capability_block}
-{profile_block}{doc_block}{web_block}"""
+{profile_block}{summary_block}{doc_block}{web_block}"""
 
     formatted = system_prompt + "\n\n"
     for msg in conversation:
@@ -277,21 +278,17 @@ def stream_reply(
     current_time:   str = "",
     web_attempted:  bool = False,
     is_guest:       bool = False,
+    history_summary: str = "",
 ) -> Generator[str, None, None]:
     """
     LLM call 2 of 2 in the agentic search pipeline.
-    Yields plain string tokens as Gemini produces them.
+    Yields plain string tokens as the local model produces them.
     """
     prompt = _build_prompt(
         conversation, context_chunks, user_profile,
-        web_context, current_time, web_attempted, is_guest,
+        web_context, current_time, web_attempted, is_guest, history_summary,
     )
-    for chunk in client.models.generate_content_stream(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    ):
-        if chunk.text:
-            yield chunk.text
+    yield from ollama_client.generate_stream(prompt)
 
 
 # ── non-streaming fallback ───────────────────────────────────────────────────
@@ -300,14 +297,11 @@ def generate_reply(
     conversation,
     context_chunks: Optional[List[Dict[str, Any]]] = None,
     user_profile:   Optional[str] = None,
+    history_summary: str = "",
 ) -> str:
     try:
-        prompt = _build_prompt(conversation, context_chunks, user_profile)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-        return response.text
+        prompt = _build_prompt(conversation, context_chunks, user_profile, history_summary=history_summary)
+        return ollama_client.generate(prompt)
     except Exception as e:
         print(f"[llm_service] Error: {e}")
         return "Sorry, something went wrong."

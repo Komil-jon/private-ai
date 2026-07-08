@@ -21,6 +21,7 @@ _HELP_TEXT = """
 /history — Browse all your past chats
 /company — View or switch your company knowledge base
 /memory  — See &amp; manage your AI memory
+/websearch — View or toggle live web search on/off
 /clear   — Delete all conversation history
 /help    — This message
 
@@ -38,7 +39,8 @@ Supported: PDF · DOCX · TXT · CSV  (max 20 MB)
 
 <b>Live web search</b>
 The AI automatically searches the web when you ask about recent events,
-news, prices, or anything needing real-time data.
+news, prices, or anything needing real-time data. Use /websearch to turn
+this off entirely if you'd rather it only use documents and its own knowledge.
 
 <b>Web App</b>
 Open the full Obelius interface inside Telegram using the button below.
